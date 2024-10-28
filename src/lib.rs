@@ -3,6 +3,7 @@ use image::{GenericImageView, GrayImage, Luma};
 use imageproc::filter::median_filter;
 use imageproc::morphology::{dilate_mut, erode_mut};
 
+pub mod homography;
 pub mod tag_families;
 
 pub fn max_pool(grey_img: &GrayImage, block_size: u32) -> (GrayImage, GrayImage) {
@@ -59,7 +60,7 @@ pub fn threshold(grey_img: &GrayImage) -> (GrayImage, GrayImage) {
                 p1.0[0] = 255;
             }
         });
-    // let img_diff = resize(&img_diff, w - wr, h - hr, image::imageops::FilterType::Nearest);
+    // let out_max = resize(&out_max, w - wr, h - hr, image::imageops::FilterType::Nearest);
     // threshim = np.where(im_diff < self.min_white_black_diff, np.uint8(0),
     //                         np.where(im > (im_min + im_diff // 2), np.uint8(255), np.uint8(0)))
     // dilate_mut(&mut out_max, imageproc::distance_transform::Norm::L1, 0);
