@@ -2,6 +2,10 @@
 // Get from following:
 // https://github.com/ethz-asl/kalibr/blob/master/aslam_offline_calibration/kalibr/python/kalibr_create_target_pdf
 
+use std::collections::HashMap;
+
+use image::DynamicImage;
+
 pub enum TagFamily {
     T16H5,
     T25H7,
@@ -52,6 +56,9 @@ impl TagDetector {
             },
         }
     }
+    pub fn detect(img: &DynamicImage) -> HashMap<u32, [f32; 4]> {
+        HashMap::<u32, [f32; 4]>::new()
+    }
 }
 
 const T16H5: [u64; 30] = [
@@ -95,7 +102,7 @@ const T25H9: [u64; 35] = [
     0x9D9B81, 0x173EEC4, 0xAE3A09, 0x5F7C51, 0x1A137FC, 0xDC9562, 0x1802E45, 0x1C3542C, 0x870FA4,
     0x914709, 0x16684F0, 0xC8F2A5, 0x833EBB, 0x59717F, 0x13CD050, 0xFA0AD1, 0x1B763B0, 0xB991CE,
 ];
-const T36H11: [u64; 587] = [
+pub const T36H11: [u64; 587] = [
     0xD5D628584,
     0xD97F18B49,
     0xDD280910E,

@@ -1,14 +1,14 @@
 use faer;
-pub fn tag_homography(corners: &[(f32, f32)], border_bit: u8) -> faer::Mat<f32> {
+pub fn tag_homography(corners: &[(f32, f32)], side_bits: u8) -> faer::Mat<f32> {
     let margin = 0.3;
     let source = [
         (-margin, -margin),
-        (-margin, border_bit as f32 - 1.0 + margin),
+        (-margin, side_bits as f32 - 1.0 + margin),
         (
-            border_bit as f32 - 1.0 + margin,
-            border_bit as f32 - 1.0 + margin,
+            side_bits as f32 - 1.0 + margin,
+            side_bits as f32 - 1.0 + margin,
         ),
-        (border_bit as f32 - 1.0 + margin, -margin),
+        (side_bits as f32 - 1.0 + margin, -margin),
     ];
     let mut mat_a = faer::Mat::<f32>::zeros(8, 9);
     for p in 0..4 {
