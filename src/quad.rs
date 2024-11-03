@@ -1,6 +1,6 @@
 use faer::solvers::SpSolver;
 use geo::{Area, LineString, MinimumRotatedRect, Polygon};
-use image::DynamicImage;
+use image::{imageops::FilterType::Nearest, DynamicImage};
 use imageproc::{
     contours::{find_contours, BorderType},
     morphology::dilate,
@@ -90,8 +90,18 @@ fn min_quad_from_p2ds(p2ds: &Vec<(f32, f32)>) -> ((Vec<usize>, VecPointsf32), Po
     )
 }
 
+pub fn adjust_brightness(img: &DynamicImage, mean_value_u8: u8) -> DynamicImage {
+    let w = 100;
+    let h = img.height() * w / img.width();
+    let small_img = img.resize_exact(w, h, Nearest).to_luma8();
+    let sum_p = small_img.pixels().map(|v| v.0[0] as usize).sum::<usize>();
+    let to_mean_p = mean_value_u8 as i32 - (sum_p as f64 / w as f64 / h as f64) as i32;
+    DynamicImage::ImageLuma8(img.to_luma8()).brighten(to_mean_p)
+}
+
 pub fn find_quad(img: &DynamicImage, min_area: f32) -> Vec<Vec<(f32, f32)>> {
-    let img0_grey = img.adjust_contrast(2000.0);
+    let img = adjust_brightness(img, 100);
+    let img0_grey = img.adjust_contrast(200.0);
     let max_pool = dilate(
         &img0_grey.to_luma8(),
         imageproc::distance_transform::Norm::LInf,
@@ -110,7 +120,7 @@ pub fn find_quad(img: &DynamicImage, min_area: f32) -> Vec<Vec<(f32, f32)>> {
 
             let final_poly = Polygon::new(LineString::from(min_quad), vec![]);
             let pa = final_poly.unsigned_area();
-            if pa < min_area || pa / mbr.unsigned_area() < 0.75 {
+            if pa < min_area || pa / mbr.unsigned_area() < 0.5 {
                 return None;
             }
 

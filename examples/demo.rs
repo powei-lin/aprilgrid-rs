@@ -1,6 +1,9 @@
 use aprilgrid_rs::quad;
 use glob::glob;
-use image::{DynamicImage, GrayImage, ImageReader};
+use image::{
+    imageops::FilterType::Nearest, DynamicImage, GenericImageView, GrayImage, ImageReader,
+};
+use imageproc::{contours::find_contours, morphology::dilate};
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use rerun::RecordingStream;
@@ -70,7 +73,7 @@ fn bit_code(img: &GrayImage, decode_pts: &[(f32, f32)]) -> Option<u64> {
         .iter()
         .filter_map(|(x, y)| {
             let (x, y) = (x.round() as u32, y.round() as u32);
-            if x >= img.width() || y > img.height() {
+            if x >= img.width() || y >= img.height() {
                 None
             } else {
                 Some(img.get_pixel(x, y).0[0])
@@ -139,7 +142,7 @@ fn best_tag(bits: u64, thres: u8) -> Option<(usize, usize)> {
             })
             .unwrap();
         if *best_score < thres as u32 {
-            println!("best {} {} rotate {}", best_idx, best_score, rotated);
+            // println!("best {} {} rotate {}", best_idx, best_score, rotated);
             return Some((best_idx, rotated));
         } else if rotated == 3 {
             break;
@@ -153,11 +156,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
-    // let dataset_root = "data";
-    let dataset_root =
-        "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
+    let dataset_root = "data0";
+    // let dataset_root =
+    //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
-
+    let mut time_sec = 0.0;
+    let fps = 30.0;
+    let one_frame_time = 1.0 / fps;
     for path in img_paths {
         let time_ns: i64 = path
             .as_ref()
@@ -171,12 +176,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let img0 = ImageReader::open(path.unwrap())?.decode()?;
 
         let img0_grey = img0.to_luma8();
-        let quads = aprilgrid_rs::quad::find_quad(&img0, 100.0);
+        let quads = aprilgrid_rs::quad::find_quad(&img0, 400.0);
 
         let mut valid_tag = Vec::new();
         let mut colors = Vec::new();
+        // recording.set_time_nanos("stable_time", time_ns);
+        recording.set_time_seconds("stable_time", time_sec);
+        time_sec += one_frame_time;
+
+        // // debug
+        // let img0_bri = aprilgrid_rs::quad::adjust_brightness(&img0, 100);
+        // let img0_grey_contrast = img0_bri.adjust_contrast(500.0);
+        // let thredhold_image = dilate(
+        //     &img0_grey_contrast.to_luma8(),
+        //     imageproc::distance_transform::Norm::LInf,
+        //     2,
+        // );
+        // log_image_as_compressed(&recording, "/cam0_bri", &img0_bri);
+        // log_image_as_compressed(&recording, "/cam0_con", &img0_grey_contrast);
+        // log_image_as_compressed(&recording, "/cam0_thres", &DynamicImage::ImageLuma8(thredhold_image));
+        // let contours = find_contours::<u32>(&max_pool);
+
         for (i, c) in quads.iter().enumerate() {
             println!("{}", i);
+            // recording
+            //     .log(
+            //         format!("/cam0/quad{}", i),
+            //         &rerun::Points2D::new(rerun_shift(c))
+            //             .with_radii([rerun::Radius::new_ui_points(2.0)]),
+            //     )
+            //     .expect("msg");
             let homo_points_option = decode_positions(&img0_grey, c, 2, 6);
             if let Some(mut homo_points) = homo_points_option {
                 let bits = bit_code(&img0_grey, &homo_points);
@@ -205,7 +234,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 //     .expect("msg");
             }
         }
-        recording.set_time_nanos("stable_time", time_ns);
         log_image_as_compressed(&recording, "/cam0", &img0);
         recording
             .log(
