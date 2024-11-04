@@ -148,12 +148,6 @@ pub fn find_quad(img: &DynamicImage, min_area: f32) -> Vec<Vec<(f32, f32)>> {
                         let (a0, b0, c0) = line_abc[i];
                         let (a1, b1, c1) = line_abc[(i + 1) % 4];
                         find_xy(a0, b0, c0, a1, b1, c1)
-                        // let a = faer::mat![[a0, b0], [a1, b1]];
-                        // let b = faer::mat![[-c0], [-c1]];
-                        // let plu = a.partial_piv_lu();
-                        // let x1 = plu.solve(&b);
-
-                        // unsafe { (*x1.get_unchecked(0, 0), *x1.get_unchecked(1, 0)) }
                     })
                     .collect();
                 Some(intersect_points)

@@ -15,11 +15,15 @@ pub enum TagFamily {
     T36H11B1,
 }
 
-struct TagDetector {
+pub struct TagDetector {
     edge: u8,
     border: u8,
     hamming_distance: u8,
     code_list: Vec<u64>,
+}
+
+pub struct DetectorParams {
+    pub brightness_mean_value: u8,
 }
 impl TagDetector {
     pub fn new(tag_family: &TagFamily) -> TagDetector {
