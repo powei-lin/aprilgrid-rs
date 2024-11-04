@@ -90,6 +90,15 @@ fn min_quad_from_p2ds(p2ds: &Vec<(f32, f32)>) -> ((Vec<usize>, VecPointsf32), Po
     )
 }
 
+pub fn find_xy(a0: f32, b0: f32, c0: f32, a1: f32, b1: f32, c1: f32) -> (f32, f32) {
+    let a = faer::mat![[a0, b0], [a1, b1]];
+    let b = faer::mat![[-c0], [-c1]];
+    let plu = a.partial_piv_lu();
+    let x1 = plu.solve(&b);
+
+    unsafe { (*x1.get_unchecked(0, 0), *x1.get_unchecked(1, 0)) }
+}
+
 pub fn adjust_brightness(img: &DynamicImage, mean_value_u8: u8) -> DynamicImage {
     let w = 100;
     let h = img.height() * w / img.width();
@@ -138,12 +147,13 @@ pub fn find_quad(img: &DynamicImage, min_area: f32) -> Vec<Vec<(f32, f32)>> {
                     .map(|i| {
                         let (a0, b0, c0) = line_abc[i];
                         let (a1, b1, c1) = line_abc[(i + 1) % 4];
-                        let a = faer::mat![[a0, b0], [a1, b1]];
-                        let b = faer::mat![[-c0], [-c1]];
-                        let plu = a.partial_piv_lu();
-                        let x1 = plu.solve(&b);
+                        find_xy(a0, b0, c0, a1, b1, c1)
+                        // let a = faer::mat![[a0, b0], [a1, b1]];
+                        // let b = faer::mat![[-c0], [-c1]];
+                        // let plu = a.partial_piv_lu();
+                        // let x1 = plu.solve(&b);
 
-                        unsafe { (*x1.get_unchecked(0, 0), *x1.get_unchecked(1, 0)) }
+                        // unsafe { (*x1.get_unchecked(0, 0), *x1.get_unchecked(1, 0)) }
                     })
                     .collect();
                 Some(intersect_points)
