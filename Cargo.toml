@@ -17,7 +17,6 @@ faer = "0.19.4"
 geo = "0.28.0"
 image = "0.25.4"
 imageproc = "0.25.0"
-nalgebra = "0.33.2"
 
 [dev-dependencies]
 env_logger = "0.11.5"
