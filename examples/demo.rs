@@ -38,14 +38,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
-    let dataset_root = "data1";
-    // let dataset_root =
-    //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
+    let dataset_root = "data";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
-    let mut time_sec = 0.0;
-    let fps = 30.0;
-    let one_frame_time = 1.0 / fps;
-    let detector = aprilgrid_rs::detector::TagDetector::new(&aprilgrid_rs::TagFamily::T36H11, None);
+    // let mut time_sec = 0.0;
+    // let fps = 60.0;
+    // let one_frame_time = 1.0 / fps;
+    let detector_params = Some(aprilgrid::detector::DetectorParams {
+        brightness_mean_value: 60,
+        ..aprilgrid::detector::DetectorParams::default_params()
+    });
+    // let detector_params = None;
+    let detector =
+        aprilgrid::detector::TagDetector::new(&aprilgrid::TagFamily::T36H11, detector_params);
     for path in img_paths {
         let time_ns: i64 = path
             .as_ref()
@@ -63,21 +67,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut decode_points = Vec::new();
         let mut tag_colors = Vec::new();
 
-        // recording.set_time_nanos("stable_time", time_ns);
-        recording.set_time_seconds("stable_time", time_sec);
-        time_sec += one_frame_time;
+        recording.set_time_nanos("stable_time", time_ns);
+        // recording.set_time_seconds("stable_time", time_sec);
+        // time_sec += one_frame_time;
         let tags = detector.detect(&img0);
         for (t_id, corners) in tags {
             let mut c: Vec<(f32, f32)> = corners.into();
             if let Some(mut homography_points) =
-                aprilgrid_rs::detector::decode_positions(img0.width(), img0.height(), &c, 2, 6, 0.5)
+                aprilgrid::detector::decode_positions(img0.width(), img0.height(), &c, 2, 6, 0.5)
             {
                 corner_colors.push((255, 0, 0, 255));
                 corner_colors.push((255, 255, 0, 255));
                 corner_colors.push((255, 0, 255, 255));
                 corner_colors.push((0, 255, 255, 255));
                 corner_list.append(&mut c);
-
                 tag_colors.append(&mut vec![
                     id_to_color(t_id as usize);
                     homography_points.len()
@@ -87,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         log_image_as_compressed(&recording, "/cam0", &img0);
+        log_image_as_compressed(&recording, "/cam0_color", &img0);
         recording
             .log(
                 format!("/cam0/corners"),
