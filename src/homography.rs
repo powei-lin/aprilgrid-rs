@@ -1,7 +1,6 @@
 use faer;
 use nalgebra as na;
-pub fn tag_homography(corners: &[(f32, f32)], side_bits: u8) -> faer::Mat<f32> {
-    let margin = 0.3;
+pub fn tag_homography(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::Mat<f32> {
     let source = [
         (-margin, -margin),
         (-margin, side_bits as f32 - 1.0 + margin),

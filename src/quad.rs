@@ -109,7 +109,6 @@ pub fn adjust_brightness(img: &DynamicImage, mean_value_u8: u8) -> DynamicImage 
 }
 
 pub fn find_quad(img: &DynamicImage, min_area: f32) -> Vec<Vec<(f32, f32)>> {
-    let img = adjust_brightness(img, 100);
     let img0_grey = img.adjust_contrast(200.0);
     let max_pool = dilate(
         &img0_grey.to_luma8(),

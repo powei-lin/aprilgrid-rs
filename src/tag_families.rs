@@ -2,10 +2,6 @@
 // Get from following:
 // https://github.com/ethz-asl/kalibr/blob/master/aslam_offline_calibration/kalibr/python/kalibr_create_target_pdf
 
-use std::collections::HashMap;
-
-use image::DynamicImage;
-
 pub enum TagFamily {
     T16H5,
     T25H7,
@@ -15,62 +11,12 @@ pub enum TagFamily {
     T36H11B1,
 }
 
-pub struct TagDetector {
-    edge: u8,
-    border: u8,
-    hamming_distance: u8,
-    code_list: Vec<u64>,
-}
-
-pub struct DetectorParams {
-    pub brightness_mean_value: u8,
-}
-impl TagDetector {
-    pub fn new(tag_family: &TagFamily) -> TagDetector {
-        match tag_family {
-            TagFamily::T16H5 => TagDetector {
-                edge: 4,
-                border: 2,
-                hamming_distance: 5,
-                code_list: T16H5.to_vec(),
-            },
-            TagFamily::T25H7 => TagDetector {
-                edge: 5,
-                border: 2,
-                hamming_distance: 7,
-                code_list: T25H7.to_vec(),
-            },
-            TagFamily::T25H9 => TagDetector {
-                edge: 5,
-                border: 2,
-                hamming_distance: 9,
-                code_list: T25H9.to_vec(),
-            },
-            TagFamily::T36H11 => TagDetector {
-                edge: 6,
-                border: 2,
-                hamming_distance: 11,
-                code_list: T36H11.to_vec(),
-            },
-            TagFamily::T36H11B1 => TagDetector {
-                edge: 6,
-                border: 1,
-                hamming_distance: 11,
-                code_list: T36H11.to_vec(),
-            },
-        }
-    }
-    pub fn detect(img: &DynamicImage) -> HashMap<u32, [f32; 4]> {
-        HashMap::<u32, [f32; 4]>::new()
-    }
-}
-
-const T16H5: [u64; 30] = [
+pub const T16H5: [u64; 30] = [
     0x231B, 0x2EA5, 0x346A, 0x45B9, 0x79A6, 0x7F6B, 0xB358, 0xE745, 0xFE59, 0x156D, 0x380B, 0xF0AB,
     0x0D84, 0x4736, 0x8C72, 0xAF10, 0x093C, 0x93B4, 0xA503, 0x468F, 0xE137, 0x5795, 0xDF42, 0x1C1D,
     0xE9DC, 0x73AD, 0xAD5F, 0xD530, 0x07CA, 0xAF2E,
 ];
-const T25H7: [u64; 242] = [
+pub const T25H7: [u64; 242] = [
     0x4B770D, 0x11693E6, 0x1A599AB, 0xC3A535, 0x152AAFA, 0xACCD98, 0x1CAD922, 0x2C2FAD, 0xBB3572,
     0x14A3B37, 0x186524B, 0xC99D4C, 0x23BFEA, 0x141CB74, 0x1D0D139, 0x1670AEB, 0x851675, 0x150334E,
     0x6E3ED8, 0xFD449D, 0xAA55EC, 0x1C86176, 0x15E9B28, 0x7CA6B2, 0x147C38B, 0x1D6C950, 0x8B0E8C,
@@ -100,7 +46,7 @@ const T25H7: [u64; 242] = [
     0x692B1D, 0x39E4FE, 0xAAFF3D, 0x96224C, 0x13C9F77, 0x110EE8F, 0xF17BEA, 0x99FB5D, 0x337141,
     0x02B54D, 0x1233A70,
 ];
-const T25H9: [u64; 35] = [
+pub const T25H9: [u64; 35] = [
     0x155CBF1, 0x1E4D1B6, 0x17B0B68, 0x1EAC9CD, 0x12E14CE, 0x3548BB, 0x7757E6, 0x1065DAB,
     0x1BAA2E7, 0xDEA688, 0x81D927, 0x51B241, 0xDBC8AE, 0x1E50E19, 0x15819D2, 0x16D8282, 0x163E035,
     0x9D9B81, 0x173EEC4, 0xAE3A09, 0x5F7C51, 0x1A137FC, 0xDC9562, 0x1802E45, 0x1C3542C, 0x870FA4,
