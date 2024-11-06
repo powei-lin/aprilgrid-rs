@@ -1,4 +1,5 @@
 # aprilgrid-rs
+[![crate](https://img.shields.io/crates/v/aprilgrid.svg)](https://crates.io/crates/aprilgrid)
 
 ### Pure Rust version of aprilgrid
 
