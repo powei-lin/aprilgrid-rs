@@ -39,12 +39,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
     let dataset_root = "data";
+    let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
     // let mut time_sec = 0.0;
     // let fps = 60.0;
     // let one_frame_time = 1.0 / fps;
     let detector_params = Some(aprilgrid::detector::DetectorParams {
-        brightness_mean_value: 60,
+        brightness_mean_value: 50,
         ..aprilgrid::detector::DetectorParams::default_params()
     });
     // let detector_params = None;

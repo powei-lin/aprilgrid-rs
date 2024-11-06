@@ -28,3 +28,7 @@ rerun = "0.17.0"
 [[example]]
 name = "demo"
 path = "examples/demo.rs"
+
+[[example]]
+name = "develop"
+path = "examples/develop.rs"
