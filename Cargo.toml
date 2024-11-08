@@ -10,7 +10,7 @@ homepage = "https://github.com/powei-lin/aprilgrid-rs"
 repository = "https://github.com/powei-lin/aprilgrid-rs"
 keywords = ["apriltag", "aprilgrid", "aruco"]
 categories = ["data-structures", "science", "mathematics"]
-exclude = ["/.github/*", "*.ipynb", "./scripts/*", "examples/*"]
+exclude = ["/.github/*", "*.ipynb", "./scripts/*", "examples/*", "tests/*"]
 
 [dependencies]
 faer = "0.19.4"
