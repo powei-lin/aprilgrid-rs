@@ -30,6 +30,11 @@ let tags = detector.detect(&img);
 cargo run --example demo -r
 ```
 
+## Run tests
+```sh
+cargo test -r
+```
+
 ## TODO
 - [ ] Robustness.
 - [ ] Unit tests.
