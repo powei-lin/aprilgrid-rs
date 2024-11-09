@@ -19,6 +19,7 @@ image = "0.25.4"
 imageproc = "0.25.0"
 
 [dev-dependencies]
+clap = { version = "4.5.20", features = ["derive"] }
 env_logger = "0.11.5"
 glob = "0.3.1"
 rand = "0.8.5"

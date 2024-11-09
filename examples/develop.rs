@@ -9,6 +9,16 @@ use rand_chacha::ChaCha8Rng;
 use rerun::RecordingStream;
 use std::io::Cursor;
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Name of the person to greet
+    #[arg(short, long)]
+    img: String,
+}
+
 fn log_image_as_compressed(recording: &RecordingStream, topic: &str, img: &DynamicImage) {
     let mut bytes: Vec<u8> = Vec::new();
     img.to_luma8()
@@ -128,7 +138,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let fps = 60.0;
     // let one_frame_time = 1.0 / fps;
     // let detector_params = None;
-    let img_path = "tests/data/1520525772624130511.png";
+    let args = Args::parse();
+    let img_path = args.img;
     let img = ImageReader::open(img_path)?.decode()?;
     // let small = image::imageops::resize(&img.to_luma32f(), 100, 100, Triangle);
     let blur: image::ImageBuffer<image::Luma<f32>, Vec<f32>> =
@@ -191,7 +202,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     recording
         .log(
             format!("/cam0/image/cluster"),
-            &rerun::Points2D::new(rerun_shift(&cs)).with_radii([rerun::Radius::new_ui_points(1.0)]),
+            &rerun::Points2D::new(rerun_shift(&cs)).with_radii([rerun::Radius::new_ui_points(3.0)]),
         )
         .expect("msg");
     // log_grey_image_as_compressed(&recording, "/cam0", &img_d);
