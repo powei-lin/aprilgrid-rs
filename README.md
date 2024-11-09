@@ -1,4 +1,5 @@
 # aprilgrid-rs
+[![crate](https://img.shields.io/crates/v/aprilgrid.svg)](https://crates.io/crates/aprilgrid)
 
 ### Pure Rust version of aprilgrid
 
@@ -27,6 +28,11 @@ let tags = detector.detect(&img);
 ## Example
 ```sh
 cargo run --example demo -r
+```
+
+## Run tests
+```sh
+cargo test -r
 ```
 
 ## TODO
