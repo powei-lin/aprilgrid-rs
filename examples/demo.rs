@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
     let dataset_root = "data";
-    // let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
+    let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
     let dataset_root =
         "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         log_image_as_compressed(&recording, "/cam0", &img0);
         // log_image_as_compressed(&recording, "/cam0_contrast", &img0.adjust_contrast(200.0));
-        log_image_as_compressed(&recording, "/cam0_color", &img0);
+        // log_image_as_compressed(&recording, "/cam0_color", &img0);
         recording
             .log(
                 format!("/cam0/corners"),

@@ -223,6 +223,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
     let mut count = 0;
     let mut start_idx = active_idxs.iter().next().unwrap().clone();
+    let mut corner_colors = Vec::new();
+    let mut corner_list = Vec::new();
+
     while active_idxs.len() >= 4 {
         if !active_idxs.remove(&start_idx) {
             start_idx = active_idxs.iter().next().unwrap().clone();
@@ -361,15 +364,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             (0, 0, 255, 255),
                             (255, 0, 255, 255),
                         ];
-                        recording
-                            .log(
-                                format!("/cam0/image/tag{}", tag_id.0),
-                                &rerun::Points2D::new(rerun_shift(&pp))
-                                    .with_radii([rerun::Radius::new_ui_points(2.0)])
-                                    // .with_colors(color)
-                                    .with_labels([format!("t{}", tag_id.0).as_str()]),
-                            )
-                            .expect("msg");
+                        corner_colors.append(&mut vec![id_to_color(tag_id.0); 4]);
+                        corner_list.append(&mut pp.clone());
+
                         println!("{}", count);
                         println!("s0 {:?}", current_saddle);
                         println!("s1 {:?}", side_saddle0);
@@ -421,6 +418,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &rerun::Points2D::new(rerun_shift(&cs))
                 .with_radii([rerun::Radius::new_ui_points(3.0)])
                 .with_labels(logs),
+        )
+        .expect("msg");
+
+    recording
+        .log(
+            format!("/cam0/image/tags"),
+            &rerun::Points2D::new(rerun_shift(&corner_list))
+                .with_radii([rerun::Radius::new_ui_points(4.0)])
+                .with_colors(corner_colors),
         )
         .expect("msg");
     // log_grey_image_as_compressed(&recording, "/cam0", &img_d);

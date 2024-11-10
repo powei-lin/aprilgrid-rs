@@ -234,19 +234,26 @@ fn closest_n_idx(
     self_idx: usize,
     active_idxs: &HashSet<usize>,
     num: usize,
+    same_polarity: bool,
 ) -> Vec<usize> {
+    let target = saddles[self_idx];
+    // let polarity = (target.theta - target.theta2).abs() < 1.0;
     let mut sorted: Vec<_> = saddles
         .iter()
         .enumerate()
         .filter_map(|(i, s)| {
             if active_idxs.contains(&i) {
-                Some((i, s.clone()))
-            } else {
-                None
+                let polarity =
+                    ((s.theta - target.theta).abs() + (s.theta2 - target.theta2).abs()) < 15.0;
+                if same_polarity && polarity {
+                    return Some((i, s.clone()));
+                } else if !same_polarity && !polarity {
+                    return Some((i, s.clone()));
+                }
             }
+            None
         })
         .collect();
-    let target = saddles[self_idx];
     sorted.sort_by(|(_, a), (_, b)| {
         saddle_distance2(&target, a)
             .partial_cmp(&saddle_distance2(&target, b))
@@ -268,6 +275,7 @@ pub struct Saddle {
     pub p: (f32, f32),
     pub k: f32,
     pub theta: f32,
+    pub theta2: f32,
     pub phi: f32,
 }
 
@@ -386,10 +394,15 @@ where
                 let k = (c4 * c4 + c3 * c3).sqrt();
                 let phi = (-1.0 * c5 / k).acos() / 2.0 / PI * 180.0;
                 let theta = (c3 / k).asin() / 2.0 / PI * 180.0;
+                let theta2 = (c4 / k).acos() / 2.0 / PI * 180.0;
+                if c5.abs() > 0.5 {
+                    continue;
+                }
                 refined_corners.push(Saddle {
                     p: (initial_x.round() + x0, initial_y.round() + y0),
                     k,
                     theta,
+                    theta2,
                     phi,
                 });
             }
@@ -497,125 +510,243 @@ impl TagDetector {
             }
             let current_saddle = refined[start_idx];
             // println!("start idx: {} {} {}", start_idx, refined[start_idx].p.0, refined[start_idx].p.1);
-            let closest_idxs = closest_n_idx(&refined, start_idx, &active_idxs, 50);
-
-            let it = (0..closest_idxs.len()).combinations(3);
-            for iv in it {
-                let mut id_saddle: Vec<(usize, Saddle)> = iv
-                    .iter()
-                    .map(|i| (closest_idxs[*i], refined[closest_idxs[*i]]))
-                    .collect();
-                id_saddle.sort_by(|a, b| {
-                    (current_saddle.theta - a.1.theta)
-                        .abs()
-                        .partial_cmp(&(current_saddle.theta - b.1.theta).abs())
-                        .unwrap()
-                });
-                let (idx_i, cross_saddle) = id_saddle[0];
-                let (idx_j, side_saddle0) = id_saddle[1];
-                let (idx_k, side_saddle1) = id_saddle[2];
-                // let relative_theta_sort = [i, j, k]
-                if (current_saddle.theta - cross_saddle.theta).abs() > 10.0 {
-                    continue;
+            let closest_idxs_same = closest_n_idx(&refined, start_idx, &active_idxs, 15, true);
+            let closest_idxs_diff = closest_n_idx(&refined, start_idx, &active_idxs, 25, false);
+            let mut found = false;
+            for idx_i in &closest_idxs_same {
+                if found {
+                    break;
                 }
-                if (side_saddle0.theta - side_saddle1.theta).abs() > 10.0 {
-                    continue;
-                }
-
-                let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
-                let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
-                let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
-                let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
-                let avg_l = (l0 + l1 + l2 + l3) / 4.0;
-                let l_ratio = 0.3;
-                let min_l = avg_l * (1.0 - l_ratio);
-                let max_l = avg_l * (1.0 + l_ratio);
-                if avg_tag_l.len() > 4 {
-                    let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
-                    if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
+                for jk in closest_idxs_diff.iter().combinations(2) {
+                    let idx_i = *idx_i;
+                    let idx_j = *jk[0];
+                    let idx_k = *jk[1];
+                    let cross_saddle = refined[idx_i];
+                    let side_saddle0 = refined[idx_j];
+                    let side_saddle1 = refined[idx_k];
+                    // let relative_theta_sort = [i, j, k]
+                    if (current_saddle.theta - cross_saddle.theta).abs() > 10.0 {
                         continue;
                     }
-                }
-                if l0 < min_l
-                    || l0 > max_l
-                    || l1 < min_l
-                    || l1 > max_l
-                    || l2 < min_l
-                    || l2 > max_l
-                    || l3 < min_l
-                    || l3 > max_l
-                {
-                    continue;
-                }
-                let v0 = (
-                    side_saddle0.p.0 - current_saddle.p.0,
-                    side_saddle0.p.1 - current_saddle.p.1,
-                );
-                let v1 = (
-                    side_saddle1.p.0 - current_saddle.p.0,
-                    side_saddle1.p.1 - current_saddle.p.1,
-                );
-                let v2 = (
-                    cross_saddle.p.0 - current_saddle.p.0,
-                    cross_saddle.p.1 - current_saddle.p.1,
-                );
-                let c0 = cross(&v0, &v2);
-                let c1 = cross(&v2, &v1);
-                if c0 * c1 < 0.0 {
-                    continue;
-                }
-                if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
-                    continue;
-                }
+                    if (side_saddle0.theta - side_saddle1.theta).abs() > 10.0 {
+                        continue;
+                    }
 
-                let pp = if c0 > 0.0 {
-                    vec![
-                        current_saddle.p,
-                        refined[idx_j].p,
-                        refined[idx_i].p,
-                        refined[idx_k].p,
-                    ]
-                } else {
-                    vec![
-                        current_saddle.p,
-                        refined[idx_k].p,
-                        refined[idx_i].p,
-                        refined[idx_j].p,
-                    ]
-                };
-                let homo_points_option =
-                    decode_positions(img.width(), img.height(), &pp, self.border, self.edge, 0.5);
-                if let Some(homo_points) = homo_points_option {
-                    let bits = bit_code(&img_grey, &homo_points, 10, 5);
-                    if bits.is_some() {
-                        let tag_id_option = best_tag(
-                            bits.unwrap(),
-                            self.hamming_distance,
-                            &self.code_list,
-                            self.edge,
-                        );
-                        if tag_id_option.is_some() {
-                            active_idxs.remove(&idx_i);
-                            active_idxs.remove(&idx_j);
-                            active_idxs.remove(&idx_k);
-                            for next_idx in &closest_idxs {
-                                if active_idxs.contains(next_idx) {
-                                    start_idx = *next_idx;
-                                    break;
-                                }
-                            }
-                            avg_tag_l.push(avg_l);
-                            let tag_id = tag_id_option.unwrap();
-
-                            let mut pp = pp;
-                            pp.rotate_left(tag_id.1);
-                            let refined_arr: [(f32, f32); 4] = pp.try_into().unwrap();
-                            detected_tags.insert(tag_id.0 as u32, refined_arr);
-                            break;
+                    let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
+                    let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
+                    let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
+                    let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
+                    let avg_l = (l0 + l1 + l2 + l3) / 4.0;
+                    let l_ratio = 0.3;
+                    let min_l = avg_l * (1.0 - l_ratio);
+                    let max_l = avg_l * (1.0 + l_ratio);
+                    if avg_tag_l.len() > 4 {
+                        let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
+                        if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
+                            continue;
                         }
                     }
-                };
+                    if l0 < min_l
+                        || l0 > max_l
+                        || l1 < min_l
+                        || l1 > max_l
+                        || l2 < min_l
+                        || l2 > max_l
+                        || l3 < min_l
+                        || l3 > max_l
+                    {
+                        continue;
+                    }
+                    let v0 = (
+                        side_saddle0.p.0 - current_saddle.p.0,
+                        side_saddle0.p.1 - current_saddle.p.1,
+                    );
+                    let v1 = (
+                        side_saddle1.p.0 - current_saddle.p.0,
+                        side_saddle1.p.1 - current_saddle.p.1,
+                    );
+                    let v2 = (
+                        cross_saddle.p.0 - current_saddle.p.0,
+                        cross_saddle.p.1 - current_saddle.p.1,
+                    );
+                    let c0 = cross(&v0, &v2);
+                    let c1 = cross(&v2, &v1);
+                    if c0 * c1 < 0.0 {
+                        continue;
+                    }
+                    if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+                        continue;
+                    }
+
+                    let pp = if c0 > 0.0 {
+                        vec![
+                            current_saddle.p,
+                            refined[idx_j].p,
+                            refined[idx_i].p,
+                            refined[idx_k].p,
+                        ]
+                    } else {
+                        vec![
+                            current_saddle.p,
+                            refined[idx_k].p,
+                            refined[idx_i].p,
+                            refined[idx_j].p,
+                        ]
+                    };
+                    let homo_points_option = decode_positions(
+                        img.width(),
+                        img.height(),
+                        &pp,
+                        self.border,
+                        self.edge,
+                        0.5,
+                    );
+                    if let Some(homo_points) = homo_points_option {
+                        let bits = bit_code(&img_grey, &homo_points, 10, 3);
+                        if bits.is_some() {
+                            let tag_id_option =
+                                best_tag(bits.unwrap(), 2, &self.code_list, self.edge);
+                            if tag_id_option.is_some() {
+                                active_idxs.remove(&idx_i);
+                                active_idxs.remove(&idx_j);
+                                active_idxs.remove(&idx_k);
+                                for next_idx in &closest_idxs_same {
+                                    if active_idxs.contains(next_idx) {
+                                        start_idx = *next_idx;
+                                        break;
+                                    }
+                                }
+                                avg_tag_l.push(avg_l);
+                                let tag_id = tag_id_option.unwrap();
+
+                                let mut pp = pp;
+                                pp.rotate_left(tag_id.1);
+                                let refined_arr: [(f32, f32); 4] = pp.try_into().unwrap();
+                                detected_tags.insert(tag_id.0 as u32, refined_arr);
+                                found = true;
+                                break;
+                            }
+                        }
+                    };
+                }
             }
+            // let it = (0..closest_idxs.len()).combinations(3);
+            // for iv in it {
+            //     let mut id_saddle: Vec<(usize, Saddle)> = iv
+            //         .iter()
+            //         .map(|i| (closest_idxs[*i], refined[closest_idxs[*i]]))
+            //         .collect();
+            //     id_saddle.sort_by(|a, b| {
+            //         (current_saddle.theta - a.1.theta)
+            //             .abs()
+            //             .partial_cmp(&(current_saddle.theta - b.1.theta).abs())
+            //             .unwrap()
+            //     });
+            //     let (idx_i, cross_saddle) = id_saddle[0];
+            //     let (idx_j, side_saddle0) = id_saddle[1];
+            //     let (idx_k, side_saddle1) = id_saddle[2];
+            //     // let relative_theta_sort = [i, j, k]
+            //     if (current_saddle.theta - cross_saddle.theta).abs() > 10.0 {
+            //         continue;
+            //     }
+            //     if (side_saddle0.theta - side_saddle1.theta).abs() > 10.0 {
+            //         continue;
+            //     }
+
+            //     let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
+            //     let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
+            //     let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
+            //     let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
+            //     let avg_l = (l0 + l1 + l2 + l3) / 4.0;
+            //     let l_ratio = 0.3;
+            //     let min_l = avg_l * (1.0 - l_ratio);
+            //     let max_l = avg_l * (1.0 + l_ratio);
+            //     if avg_tag_l.len() > 4 {
+            //         let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
+            //         if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
+            //             continue;
+            //         }
+            //     }
+            //     if l0 < min_l
+            //         || l0 > max_l
+            //         || l1 < min_l
+            //         || l1 > max_l
+            //         || l2 < min_l
+            //         || l2 > max_l
+            //         || l3 < min_l
+            //         || l3 > max_l
+            //     {
+            //         continue;
+            //     }
+            //     let v0 = (
+            //         side_saddle0.p.0 - current_saddle.p.0,
+            //         side_saddle0.p.1 - current_saddle.p.1,
+            //     );
+            //     let v1 = (
+            //         side_saddle1.p.0 - current_saddle.p.0,
+            //         side_saddle1.p.1 - current_saddle.p.1,
+            //     );
+            //     let v2 = (
+            //         cross_saddle.p.0 - current_saddle.p.0,
+            //         cross_saddle.p.1 - current_saddle.p.1,
+            //     );
+            //     let c0 = cross(&v0, &v2);
+            //     let c1 = cross(&v2, &v1);
+            //     if c0 * c1 < 0.0 {
+            //         continue;
+            //     }
+            //     if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+            //         continue;
+            //     }
+
+            //     let pp = if c0 > 0.0 {
+            //         vec![
+            //             current_saddle.p,
+            //             refined[idx_j].p,
+            //             refined[idx_i].p,
+            //             refined[idx_k].p,
+            //         ]
+            //     } else {
+            //         vec![
+            //             current_saddle.p,
+            //             refined[idx_k].p,
+            //             refined[idx_i].p,
+            //             refined[idx_j].p,
+            //         ]
+            //     };
+            //     let homo_points_option =
+            //         decode_positions(img.width(), img.height(), &pp, self.border, self.edge, 0.5);
+            //     if let Some(homo_points) = homo_points_option {
+            //         let bits = bit_code(&img_grey, &homo_points, 10, 5);
+            //         if bits.is_some() {
+            //             let tag_id_option = best_tag(
+            //                 bits.unwrap(),
+            //                 self.hamming_distance,
+            //                 &self.code_list,
+            //                 self.edge,
+            //             );
+            //             if tag_id_option.is_some() {
+            //                 active_idxs.remove(&idx_i);
+            //                 active_idxs.remove(&idx_j);
+            //                 active_idxs.remove(&idx_k);
+            //                 for next_idx in &closest_idxs {
+            //                     if active_idxs.contains(next_idx) {
+            //                         start_idx = *next_idx;
+            //                         break;
+            //                     }
+            //                 }
+            //                 avg_tag_l.push(avg_l);
+            //                 let tag_id = tag_id_option.unwrap();
+
+            //                 let mut pp = pp;
+            //                 pp.rotate_left(tag_id.1);
+            //                 let refined_arr: [(f32, f32); 4] = pp.try_into().unwrap();
+            //                 detected_tags.insert(tag_id.0 as u32, refined_arr);
+            //                 break;
+            //             }
+            //         }
+            //     };
+            // }
         }
         detected_tags
     }
