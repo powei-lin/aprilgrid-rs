@@ -5,12 +5,11 @@ use std::{
     ops::BitXor,
 };
 
-use crate::{homography, quad, tag_families};
+use crate::image_util::GrayImagef32;
+use crate::{image_util, math_util, tag_families};
 use faer::solvers::SpSolverLstsq;
-use image::{DynamicImage, GenericImage, GenericImageView, GrayImage, ImageBuffer, Luma};
+use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
 use itertools::Itertools;
-
-type GrayImagef32 = image::ImageBuffer<image::Luma<f32>, Vec<f32>>;
 
 pub struct TagDetector {
     edge: u8,
@@ -51,7 +50,7 @@ pub fn decode_positions(
         return None;
     }
     let side_bits = border_bits * 2 + edge_bits;
-    let h = homography::tag_homography(quad_pts, side_bits, margin);
+    let h = image_util::tag_homography(quad_pts, side_bits, margin);
     Some(
         (border_bits..border_bits + edge_bits)
             .flat_map(|x| {
@@ -156,65 +155,13 @@ pub fn best_tag(bits: u64, thres: u8, tag_family: &[u64], edge_bits: u8) -> Opti
     None
 }
 
-fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
-    let mut out = GrayImagef32::new(img.width(), img.height());
-    for r in 1..(img.height() - 1) {
-        for c in 1..(img.width() - 1) {
-            let (v11, v12, v13, v21, v22, v23, v31, v32, v33) = unsafe {
-                (
-                    img.unsafe_get_pixel(c - 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c, r - 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c - 1, r).0[0],
-                    img.unsafe_get_pixel(c, r).0[0],
-                    img.unsafe_get_pixel(c + 1, r).0[0],
-                    img.unsafe_get_pixel(c - 1, r + 1).0[0],
-                    img.unsafe_get_pixel(c, r + 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r + 1).0[0],
-                )
-            };
-            let lxx = v21 - 2.0 * v22 + v23;
-            let lyy = v12 - 2.0 * v22 + v32;
-            let lxy = (v13 - v11 + v31 - v33) / 4.0;
-
-            /* normalize and write out */
-            unsafe {
-                out.unsafe_put_pixel(c, r, [(lxx * lyy - lxy * lxy)].into());
-            }
-        }
-    }
-    out
-}
-
-fn pixel_bfs(
-    mat: &mut GrayImagef32,
-    cluster: &mut Vec<(u32, u32)>,
-    x: u32,
-    y: u32,
-    threshold: f32,
-) {
-    if x < mat.width() && y < mat.height() {
-        let v = unsafe { mat.unsafe_get_pixel(x, y).0[0] };
-        if v < threshold {
-            cluster.push((x, y));
-            unsafe {
-                mat.unsafe_put_pixel(x, y, [f32::MAX].into());
-            }
-            pixel_bfs(mat, cluster, x - 1, y, threshold);
-            pixel_bfs(mat, cluster, x + 1, y, threshold);
-            pixel_bfs(mat, cluster, x, y + 1, threshold);
-            pixel_bfs(mat, cluster, x, y + 1, threshold);
-        }
-    }
-}
-
 fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u32)>> {
     let mut tmp_h_mat = h_mat.clone();
     let mut clusters = Vec::new();
     for r in 1..h_mat.height() - 1 {
         for c in 1..h_mat.width() - 1 {
             let mut cluster = Vec::new();
-            pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
+            image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
             if cluster.len() > 0 {
                 clusters.push(cluster);
             }
@@ -279,7 +226,7 @@ pub struct Saddle {
     pub phi: f32,
 }
 
-pub fn rochade_refine2<T>(
+pub fn rochade_refine<T>(
     image_input: &ImageBuffer<Luma<T>, Vec<T>>,
     initial_corners: &Vec<(f32, f32)>,
     half_size_patch: i32,
@@ -381,7 +328,7 @@ where
 
         // is saddle point
         if d < 0.0 {
-            let (x0, y0) = quad::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
+            let (x0, y0) = math_util::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
             // move too much
             if x0.abs() > 1.0 || y0.abs() > 1.0 {
                 continue;
@@ -436,21 +383,21 @@ impl TagDetector {
             tag_families::TagFamily::T25H9 => TagDetector {
                 edge: 5,
                 border: 2,
-                hamming_distance: 3,
+                hamming_distance: 2,
                 code_list: tag_families::T25H9.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11 => TagDetector {
                 edge: 6,
                 border: 2,
-                hamming_distance: 3,
+                hamming_distance: 2,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11B1 => TagDetector {
                 edge: 6,
                 border: 1,
-                hamming_distance: 3,
+                hamming_distance: 2,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
@@ -459,7 +406,7 @@ impl TagDetector {
 
     pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
         let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
-        let hessian_response_mat = hessian_response(&blur);
+        let hessian_response_mat = image_util::hessian_response(&blur);
         let min_response = hessian_response_mat
             .to_vec()
             .iter()
@@ -475,7 +422,7 @@ impl TagDetector {
                 (sx / c.len() as f32, sy / c.len() as f32)
             })
             .collect();
-        let saddle_points = rochade_refine2(&blur, &saddle_cluster_centers, 2);
+        let saddle_points = rochade_refine(&blur, &saddle_cluster_centers, 2);
         let smax = saddle_points.iter().fold(f32::MIN, |acc, s| acc.max(s.k)) / 10.0;
         let min_angle = 30.0;
         let max_angle = 60.0;
@@ -604,8 +551,12 @@ impl TagDetector {
                     if let Some(homo_points) = homo_points_option {
                         let bits = bit_code(&img_grey, &homo_points, 10, 3);
                         if bits.is_some() {
-                            let tag_id_option =
-                                best_tag(bits.unwrap(), 2, &self.code_list, self.edge);
+                            let tag_id_option = best_tag(
+                                bits.unwrap(),
+                                self.hamming_distance,
+                                &self.code_list,
+                                self.edge,
+                            );
                             if tag_id_option.is_some() {
                                 active_idxs.remove(&idx_i);
                                 active_idxs.remove(&idx_j);
@@ -630,123 +581,6 @@ impl TagDetector {
                     };
                 }
             }
-            // let it = (0..closest_idxs.len()).combinations(3);
-            // for iv in it {
-            //     let mut id_saddle: Vec<(usize, Saddle)> = iv
-            //         .iter()
-            //         .map(|i| (closest_idxs[*i], refined[closest_idxs[*i]]))
-            //         .collect();
-            //     id_saddle.sort_by(|a, b| {
-            //         (current_saddle.theta - a.1.theta)
-            //             .abs()
-            //             .partial_cmp(&(current_saddle.theta - b.1.theta).abs())
-            //             .unwrap()
-            //     });
-            //     let (idx_i, cross_saddle) = id_saddle[0];
-            //     let (idx_j, side_saddle0) = id_saddle[1];
-            //     let (idx_k, side_saddle1) = id_saddle[2];
-            //     // let relative_theta_sort = [i, j, k]
-            //     if (current_saddle.theta - cross_saddle.theta).abs() > 10.0 {
-            //         continue;
-            //     }
-            //     if (side_saddle0.theta - side_saddle1.theta).abs() > 10.0 {
-            //         continue;
-            //     }
-
-            //     let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
-            //     let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
-            //     let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
-            //     let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
-            //     let avg_l = (l0 + l1 + l2 + l3) / 4.0;
-            //     let l_ratio = 0.3;
-            //     let min_l = avg_l * (1.0 - l_ratio);
-            //     let max_l = avg_l * (1.0 + l_ratio);
-            //     if avg_tag_l.len() > 4 {
-            //         let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
-            //         if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
-            //             continue;
-            //         }
-            //     }
-            //     if l0 < min_l
-            //         || l0 > max_l
-            //         || l1 < min_l
-            //         || l1 > max_l
-            //         || l2 < min_l
-            //         || l2 > max_l
-            //         || l3 < min_l
-            //         || l3 > max_l
-            //     {
-            //         continue;
-            //     }
-            //     let v0 = (
-            //         side_saddle0.p.0 - current_saddle.p.0,
-            //         side_saddle0.p.1 - current_saddle.p.1,
-            //     );
-            //     let v1 = (
-            //         side_saddle1.p.0 - current_saddle.p.0,
-            //         side_saddle1.p.1 - current_saddle.p.1,
-            //     );
-            //     let v2 = (
-            //         cross_saddle.p.0 - current_saddle.p.0,
-            //         cross_saddle.p.1 - current_saddle.p.1,
-            //     );
-            //     let c0 = cross(&v0, &v2);
-            //     let c1 = cross(&v2, &v1);
-            //     if c0 * c1 < 0.0 {
-            //         continue;
-            //     }
-            //     if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
-            //         continue;
-            //     }
-
-            //     let pp = if c0 > 0.0 {
-            //         vec![
-            //             current_saddle.p,
-            //             refined[idx_j].p,
-            //             refined[idx_i].p,
-            //             refined[idx_k].p,
-            //         ]
-            //     } else {
-            //         vec![
-            //             current_saddle.p,
-            //             refined[idx_k].p,
-            //             refined[idx_i].p,
-            //             refined[idx_j].p,
-            //         ]
-            //     };
-            //     let homo_points_option =
-            //         decode_positions(img.width(), img.height(), &pp, self.border, self.edge, 0.5);
-            //     if let Some(homo_points) = homo_points_option {
-            //         let bits = bit_code(&img_grey, &homo_points, 10, 5);
-            //         if bits.is_some() {
-            //             let tag_id_option = best_tag(
-            //                 bits.unwrap(),
-            //                 self.hamming_distance,
-            //                 &self.code_list,
-            //                 self.edge,
-            //             );
-            //             if tag_id_option.is_some() {
-            //                 active_idxs.remove(&idx_i);
-            //                 active_idxs.remove(&idx_j);
-            //                 active_idxs.remove(&idx_k);
-            //                 for next_idx in &closest_idxs {
-            //                     if active_idxs.contains(next_idx) {
-            //                         start_idx = *next_idx;
-            //                         break;
-            //                     }
-            //                 }
-            //                 avg_tag_l.push(avg_l);
-            //                 let tag_id = tag_id_option.unwrap();
-
-            //                 let mut pp = pp;
-            //                 pp.rotate_left(tag_id.1);
-            //                 let refined_arr: [(f32, f32); 4] = pp.try_into().unwrap();
-            //                 detected_tags.insert(tag_id.0 as u32, refined_arr);
-            //                 break;
-            //             }
-            //         }
-            //     };
-            // }
         }
         detected_tags
     }
