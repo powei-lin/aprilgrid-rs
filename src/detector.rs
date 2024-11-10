@@ -654,7 +654,7 @@ impl TagDetector {
     pub fn detect2(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
         let mut avg_tag_l = Vec::new();
-        let img_grey = img.adjust_contrast(200.0).to_luma8();
+        let img_grey = img.to_luma8();
         let refined = self.refined_saddle_points(&img);
         if refined.len() < 4 {
             return detected_tags;
@@ -702,12 +702,12 @@ impl TagDetector {
                 let l_ratio = 0.3;
                 let min_l = avg_l * (1.0 - l_ratio);
                 let max_l = avg_l * (1.0 + l_ratio);
-                // if avg_tag_l.len() > 8{
-                //     let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
-                //     if global_avg_l > max_l || global_avg_l < min_l{
-                //         continue;
-                //     }
-                // }
+                if avg_tag_l.len() > 4 {
+                    let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
+                    if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
+                        continue;
+                    }
+                }
                 if l0 < min_l
                     || l0 > max_l
                     || l1 < min_l

@@ -51,8 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..aprilgrid::detector::DetectorParams::default_params()
     });
     // let detector_params = None;
-    let detector =
-        aprilgrid::detector::TagDetector::new(&aprilgrid::TagFamily::T36H11, detector_params);
+    let detector = aprilgrid::detector::TagDetector::new(&aprilgrid::TagFamily::T36H11, None);
     for path in img_paths {
         let time_ns: i64 = path
             .as_ref()
@@ -79,17 +78,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(mut homography_points) =
                 aprilgrid::detector::decode_positions(img0.width(), img0.height(), &c, 2, 6, 0.5)
             {
-                corner_colors.push((255, 0, 0, 255));
-                corner_colors.push((255, 255, 0, 255));
-                corner_colors.push((255, 0, 255, 255));
-                corner_colors.push((0, 255, 255, 255));
-                corner_list.append(&mut c);
                 tag_colors.append(&mut vec![
                     id_to_color(t_id as usize);
                     homography_points.len()
                 ]);
                 decode_points.append(&mut homography_points);
             }
+            corner_colors.push((255, 0, 0, 255));
+            corner_colors.push((255, 255, 0, 255));
+            corner_colors.push((255, 0, 255, 255));
+            corner_colors.push((0, 255, 255, 255));
+            corner_list.append(&mut c);
         }
 
         log_image_as_compressed(&recording, "/cam0", &img0);
