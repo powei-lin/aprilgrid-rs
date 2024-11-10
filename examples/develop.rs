@@ -186,36 +186,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let refined = detector.refined_saddle_points(&img);
     let img_grey = img.to_luma8();
     // let small = image::imageops::resize(&img.to_luma32f(), 100, 100, Triangle);
-    let blur: image::ImageBuffer<image::Luma<f32>, Vec<f32>> =
-        imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
-    let h = hessian_response(&blur);
-    // let mm = h.to_vec().iter().fold(f32::MIN, |acc, e|{acc.max(*e)});
-    let mn = h.to_vec().iter().fold(f32::MAX, |acc, e| acc.min(*e));
-    let init_saddle_points: Vec<_> = h
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| {
-            if *p < mn * 0.05 {
-                Some((i as u32 % h.width(), i as u32 / h.width()))
-            } else {
-                None
-            }
-        })
-        .collect();
-    let f32pts: Vec<_> = init_saddle_points
-        .iter()
-        .map(|(x, y)| (*x as f32, *y as f32))
-        .collect();
-    let saddle_clusters = init_saddle_clusters(&h, mn * 0.05);
-    let saddle_cluster_centers: Vec<(f32, f32)> = saddle_clusters
-        .iter()
-        .map(|c| {
-            let (sx, sy) = c.iter().fold((0.0, 0.0), |(ax, ay), (ex, ey)| {
-                (ax + *ex as f32, ay + *ey as f32)
-            });
-            (sx / c.len() as f32, sy / c.len() as f32)
-        })
-        .collect();
+    // let blur: image::ImageBuffer<image::Luma<f32>, Vec<f32>> =
+    //     imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
+    // let h = hessian_response(&blur);
+    // // let mm = h.to_vec().iter().fold(f32::MIN, |acc, e|{acc.max(*e)});
+    // let mn = h.to_vec().iter().fold(f32::MAX, |acc, e| acc.min(*e));
+    // let init_saddle_points: Vec<_> = h
+    //     .iter()
+    //     .enumerate()
+    //     .filter_map(|(i, p)| {
+    //         if *p < mn * 0.05 {
+    //             Some((i as u32 % h.width(), i as u32 / h.width()))
+    //         } else {
+    //             None
+    //         }
+    //     })
+    //     .collect();
+    // let f32pts: Vec<_> = init_saddle_points
+    //     .iter()
+    //     .map(|(x, y)| (*x as f32, *y as f32))
+    //     .collect();
+    // let saddle_clusters = init_saddle_clusters(&h, mn * 0.05);
+    // let saddle_cluster_centers: Vec<(f32, f32)> = saddle_clusters
+    //     .iter()
+    //     .map(|c| {
+    //         let (sx, sy) = c.iter().fold((0.0, 0.0), |(ax, ay), (ex, ey)| {
+    //             (ax + *ex as f32, ay + *ey as f32)
+    //         });
+    //         (sx / c.len() as f32, sy / c.len() as f32)
+    //     })
+    //     .collect();
 
     log_image_as_compressed(&recording, "/cam0", &img);
     // quad search
@@ -294,7 +294,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
                     let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
                     let avg_l = (l0 + l1 + l2 + l3) / 4.0;
-                    let l_ratio = 0.2;
+                    let l_ratio = 0.3;
                     let min_l = avg_l * (1.0 - l_ratio);
                     let max_l = avg_l * (1.0 + l_ratio);
                     if l0 < min_l
@@ -369,7 +369,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .with_radii([rerun::Radius::new_ui_points(2.0)]),
                             )
                             .expect("msg");
-                        let bits = bit_code(&img_grey, &homo_points, 1, 50);
+                        let bits = bit_code(&img_grey, &homo_points, 10, 5);
                         if bits.is_some() {
                             let tag_id_option = best_tag(
                                 bits.unwrap(),
@@ -399,7 +399,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ];
                                 recording
                                     .log(
-                                        format!("/cam0/image/tag"),
+                                        format!("/cam0/image/tag{}", tag_id.0),
                                         &rerun::Points2D::new(rerun_shift(&pp))
                                             .with_radii([rerun::Radius::new_ui_points(2.0)])
                                             // .with_colors(color)
@@ -437,20 +437,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // recording.set_time_seconds("stable_time", time_sec);
     // time_sec += one_frame_time;
 
-    recording
-        .log(
-            format!("/cam0/image/cluster"),
-            &rerun::Points2D::new(rerun_shift(&f32pts))
-                .with_radii([rerun::Radius::new_ui_points(1.0)]),
-        )
-        .expect("msg");
-    recording
-        .log(
-            format!("/cam0/image/corners_center"),
-            &rerun::Points2D::new(rerun_shift(&saddle_cluster_centers))
-                .with_radii([rerun::Radius::new_ui_points(1.0)]),
-        )
-        .expect("msg");
+    // recording
+    //     .log(
+    //         format!("/cam0/image/cluster"),
+    //         &rerun::Points2D::new(rerun_shift(&f32pts))
+    //             .with_radii([rerun::Radius::new_ui_points(1.0)]),
+    //     )
+    //     .expect("msg");
+    // recording
+    //     .log(
+    //         format!("/cam0/image/corners_center"),
+    //         &rerun::Points2D::new(rerun_shift(&saddle_cluster_centers))
+    //             .with_radii([rerun::Radius::new_ui_points(1.0)]),
+    //     )
+    //     .expect("msg");
     recording
         .log(
             format!("/cam0/image/cluster_c"),
