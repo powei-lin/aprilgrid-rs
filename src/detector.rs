@@ -223,122 +223,6 @@ fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u
     clusters
 }
 
-pub fn rochade_refine<T>(
-    image_input: &ImageBuffer<Luma<T>, Vec<T>>,
-    initial_corners: &Vec<(f32, f32)>,
-    half_size_patch: i32,
-) -> Option<Vec<(f32, f32)>>
-where
-    T: image::Primitive + Into<f32>,
-{
-    let mut refined_corners = Vec::<(f32, f32)>::new();
-    // kernel
-    let kernel_size = (half_size_patch * 2 + 1) as usize;
-    let gamma = half_size_patch as f32;
-    let flat_k_slice: Vec<f32> = (0..kernel_size)
-        .flat_map(|i| {
-            (0..kernel_size)
-                .map(move |j| {
-                    0.0_f32.max(
-                        gamma + 1.0
-                            - ((gamma - i as f32) * (gamma - i as f32)
-                                + (gamma - j as f32) * (gamma - j as f32))
-                                .sqrt(),
-                    )
-                })
-                .collect::<Vec<f32>>()
-        })
-        .collect();
-    let s = flat_k_slice.iter().sum::<f32>();
-    let flat_k: Vec<f32> = flat_k_slice.iter().map(|v| v / s).collect();
-
-    let (width, height) = (image_input.width() as i32, image_input.height() as i32);
-    let half_size_patch2 = half_size_patch * 2;
-
-    // iter all corner
-    for &(initial_x, initial_y) in initial_corners {
-        let round_x = initial_x.round() as i32;
-        let round_y = initial_y.round() as i32;
-        if (round_y - half_size_patch2) < 0
-            || (round_y + half_size_patch2 >= height)
-            || (round_x - half_size_patch2 < 0)
-            || (round_x + half_size_patch2 >= width)
-        {
-            return None;
-        }
-
-        // patch
-        let patch_size: usize = 4 * half_size_patch as usize + 1;
-        let patch = image_input.view(
-            (round_x - half_size_patch2) as u32,
-            (round_y - half_size_patch2) as u32,
-            (patch_size) as u32,
-            (patch_size) as u32,
-        );
-
-        let mut smooth_sub_image: faer::Mat<f32> = faer::Mat::zeros(kernel_size, kernel_size);
-        for r in 0..kernel_size {
-            for c in 0..kernel_size {
-                let sub_patch_vec: Vec<f32> = patch
-                    .view(c as u32, r as u32, kernel_size as u32, kernel_size as u32)
-                    .pixels()
-                    .map(|(_, _, v)| v.0[0].into())
-                    .collect();
-                let conv_p = sub_patch_vec
-                    .iter()
-                    .zip(&flat_k)
-                    .fold(0.0_f32, |acc, (k, p)| acc + k * p);
-                smooth_sub_image[(r, c)] = conv_p;
-            }
-        }
-
-        // a_1*x^2 + a_2*x*y + a_3*y^2 + a_4*x + a_5*y + a_6 = f
-        let mut mat_a: faer::Mat<f32> = faer::Mat::ones(kernel_size * kernel_size, 6);
-        let mut mat_b: faer::Mat<f32> = faer::Mat::zeros(kernel_size * kernel_size, 1);
-        let mut count = 0;
-        for r in 0..kernel_size {
-            for c in 0..kernel_size {
-                let x = c as f32 - half_size_patch as f32;
-                let y = r as f32 - half_size_patch as f32;
-                let f = smooth_sub_image[(r, c)];
-                mat_a[(count, 0)] = x * x;
-                mat_a[(count, 1)] = x * y;
-                mat_a[(count, 2)] = y * y;
-                mat_a[(count, 3)] = x;
-                mat_a[(count, 4)] = y;
-                mat_b[(count, 0)] = f;
-                count += 1;
-            }
-        }
-        let params = mat_a.qr().solve_lstsq(mat_b);
-        // println!("conv {:?}", smooth_sub_image);
-        // println!("params {:?}", params);
-        let a1 = params[(0, 0)];
-        let a2 = params[(1, 0)];
-        let a3 = params[(2, 0)];
-        let a4 = params[(3, 0)];
-        let a5 = params[(4, 0)];
-        // let a6 = params[(5, 0)];
-        let fxx = 2.0 * a1;
-        let fyy = 2.0 * a3;
-        let fxy = a2;
-        let d = fxx * fyy - fxy * fxy;
-        // is saddle point
-        if d < 0.0 {
-            let (x0, y0) = quad::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
-            if x0.abs() > half_size_patch as f32 || y0.abs() > half_size_patch as f32 {
-                return None;
-            } else {
-                refined_corners.push((initial_x.round() + x0, initial_y.round() + y0));
-            }
-        } else {
-            return None;
-        }
-    }
-
-    Some(refined_corners)
-}
-
 fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
     let x = s0.p.0 - s1.p.0;
     let y = s0.p.1 - s1.p.1;
@@ -395,7 +279,6 @@ pub fn rochade_refine2<T>(
 where
     T: image::Primitive + Into<f32>,
 {
-    // let mut refined_corners = Vec::<(f32, f32)>::new();
     let mut refined_corners = Vec::<Saddle>::new();
     // kernel
     let kernel_size = (half_size_patch * 2 + 1) as usize;
@@ -476,8 +359,7 @@ where
             }
         }
         let params = mat_a.qr().solve_lstsq(mat_b);
-        // println!("conv {:?}", smooth_sub_image);
-        // println!("params {:?}", params);
+
         let a1 = params[(0, 0)];
         let a2 = params[(1, 0)];
         let a3 = params[(2, 0)];
@@ -494,7 +376,6 @@ where
             let (x0, y0) = quad::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
             // move too much
             if x0.abs() > 1.0 || y0.abs() > 1.0 {
-                // println!("moving {:0.4} {:0.4} {} {}", initial_x, initial_y, x0, y0);
                 continue;
             } else {
                 // Alturki, Abdulrahman S., and John S. Loomis.
@@ -562,61 +443,7 @@ impl TagDetector {
             },
         }
     }
-    pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
-        let img_grey = img.to_luma8();
-        let img_adjust_bri =
-            quad::adjust_brightness(img, self.detector_params.brightness_mean_value);
-        let quads = quad::find_quad(&img_adjust_bri, 400.0);
-        let mut detected_tags = HashMap::<u32, [(f32, f32); 4]>::new();
-        for c in quads.iter() {
-            let homo_points_option = decode_positions(
-                img.width(),
-                img.height(),
-                c,
-                self.border,
-                self.edge,
-                self.detector_params.margin,
-            );
-            if let Some(homo_points) = homo_points_option {
-                let bits = bit_code(&img_grey, &homo_points, 30, 5);
-                if bits.is_none() {
-                    continue;
-                }
-                let tag_id_option = best_tag(
-                    bits.unwrap(),
-                    self.hamming_distance,
-                    &self.code_list,
-                    self.edge,
-                );
-                if tag_id_option.is_none() {
-                    continue;
-                }
-                let tag_id = tag_id_option.unwrap();
 
-                // compensate dilation causing quad corner shift
-                let quad_center = c
-                    .iter()
-                    .fold((0.0, 0.0), |acc, e| (acc.0 + e.0, acc.1 + e.1));
-                let (qcx, qcy) = (quad_center.0 / 4.0, quad_center.1 / 4.0);
-
-                let mut c: Vec<(f32, f32)> = c
-                    .iter()
-                    .map(|(qx, qy)| {
-                        let (vx, vy) = (qx - qcx, qy - qcy);
-                        let n = (vx * vx + vy * vy).sqrt();
-                        let scale = self.detector_params.quad_corner_compensate_pixel;
-                        (qx + vx / n * scale, qy + vy / n * scale)
-                    })
-                    .collect();
-                c.rotate_left(tag_id.1);
-                if let Some(refined) = rochade_refine(&img_adjust_bri.to_luma8(), &c, 4) {
-                    let refined_arr: [(f32, f32); 4] = refined.try_into().unwrap();
-                    detected_tags.insert(tag_id.0 as u32, refined_arr);
-                }
-            }
-        }
-        detected_tags
-    }
     pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
         let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
         let hessian_response_mat = hessian_response(&blur);
@@ -651,7 +478,8 @@ impl TagDetector {
             .collect();
         refined
     }
-    pub fn detect2(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
+    // TODO too slow
+    pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
         let mut avg_tag_l = Vec::new();
         let img_grey = img.to_luma8();
@@ -756,11 +584,16 @@ impl TagDetector {
                     ]
                 };
                 let homo_points_option =
-                    decode_positions(img.width(), img.height(), &pp, 2, 6, 0.5);
+                    decode_positions(img.width(), img.height(), &pp, self.border, self.edge, 0.5);
                 if let Some(homo_points) = homo_points_option {
                     let bits = bit_code(&img_grey, &homo_points, 10, 5);
                     if bits.is_some() {
-                        let tag_id_option = best_tag(bits.unwrap(), 3, &self.code_list, self.edge);
+                        let tag_id_option = best_tag(
+                            bits.unwrap(),
+                            self.hamming_distance,
+                            &self.code_list,
+                            self.edge,
+                        );
                         if tag_id_option.is_some() {
                             active_idxs.remove(&idx_i);
                             active_idxs.remove(&idx_j);
