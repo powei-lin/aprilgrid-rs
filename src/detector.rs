@@ -20,17 +20,15 @@ pub struct TagDetector {
 }
 
 pub struct DetectorParams {
-    pub brightness_mean_value: u8,
-    pub quad_corner_compensate_pixel: f32,
-    pub margin: f32,
+    pub min_saddle_angle: f32,
+    pub max_saddle_angle: f32,
 }
 
 impl DetectorParams {
     pub fn default_params() -> DetectorParams {
         DetectorParams {
-            brightness_mean_value: 100,
-            quad_corner_compensate_pixel: 2.5,
-            margin: 0.3,
+            min_saddle_angle: 30.0,
+            max_saddle_angle: 60.0
         }
     }
 }
@@ -234,6 +232,7 @@ pub fn rochade_refine<T>(
 where
     T: image::Primitive + Into<f32>,
 {
+    const PIXEL_MOVE_THRESHOLD: f32 = 1.0;
     let mut refined_corners = Vec::<Saddle>::new();
     // kernel
     let kernel_size = (half_size_patch * 2 + 1) as usize;
@@ -330,7 +329,7 @@ where
         if d < 0.0 {
             let (x0, y0) = math_util::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
             // move too much
-            if x0.abs() > 1.0 || y0.abs() > 1.0 {
+            if x0.abs() > PIXEL_MOVE_THRESHOLD || y0.abs() > PIXEL_MOVE_THRESHOLD {
                 continue;
             } else {
                 // Alturki, Abdulrahman S., and John S. Loomis.
@@ -376,28 +375,28 @@ impl TagDetector {
             tag_families::TagFamily::T25H7 => TagDetector {
                 edge: 5,
                 border: 2,
-                hamming_distance: 2,
+                hamming_distance: 1,
                 code_list: tag_families::T25H7.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T25H9 => TagDetector {
                 edge: 5,
                 border: 2,
-                hamming_distance: 2,
+                hamming_distance: 1,
                 code_list: tag_families::T25H9.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11 => TagDetector {
                 edge: 6,
                 border: 2,
-                hamming_distance: 2,
+                hamming_distance: 1,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11B1 => TagDetector {
                 edge: 6,
                 border: 1,
-                hamming_distance: 2,
+                hamming_distance: 1,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
@@ -424,12 +423,10 @@ impl TagDetector {
             .collect();
         let saddle_points = rochade_refine(&blur, &saddle_cluster_centers, 2);
         let smax = saddle_points.iter().fold(f32::MIN, |acc, s| acc.max(s.k)) / 10.0;
-        let min_angle = 30.0;
-        let max_angle = 60.0;
         let refined: Vec<Saddle> = saddle_points
             .iter()
             .filter_map(|s| {
-                if s.k < smax || s.phi < min_angle || s.phi > max_angle {
+                if s.k < smax || s.phi < self.detector_params.min_saddle_angle || s.phi > self.detector_params.max_saddle_angle {
                     None
                 } else {
                     Some(s.to_owned())
@@ -449,7 +446,7 @@ impl TagDetector {
         }
         let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
 
-        let mut start_idx = active_idxs.iter().next().unwrap().clone();
+        let mut start_idx = refined.len() / 2;
         while active_idxs.len() >= 4 {
             if !active_idxs.remove(&start_idx) {
                 start_idx = active_idxs.iter().next().unwrap().clone();
@@ -458,7 +455,7 @@ impl TagDetector {
             let current_saddle = refined[start_idx];
             // println!("start idx: {} {} {}", start_idx, refined[start_idx].p.0, refined[start_idx].p.1);
             let closest_idxs_same = closest_n_idx(&refined, start_idx, &active_idxs, 15, true);
-            let closest_idxs_diff = closest_n_idx(&refined, start_idx, &active_idxs, 25, false);
+            let closest_idxs_diff = closest_n_idx(&refined, start_idx, &active_idxs, 30, false);
             let mut found = false;
             for idx_i in &closest_idxs_same {
                 if found {
@@ -572,6 +569,7 @@ impl TagDetector {
 
                                 let mut pp = pp;
                                 pp.rotate_left(tag_id.1);
+                                pp.reverse();
                                 let refined_arr: [(f32, f32); 4] = pp.try_into().unwrap();
                                 detected_tags.insert(tag_id.0 as u32, refined_arr);
                                 found = true;
