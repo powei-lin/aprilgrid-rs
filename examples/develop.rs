@@ -1,3 +1,4 @@
+use aprilgrid::detector::{best_tag, bit_code, decode_positions, Saddle};
 use core::f32;
 use glob::glob;
 use image::{
@@ -7,7 +8,7 @@ use image::{
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use rerun::RecordingStream;
-use std::io::Cursor;
+use std::{collections::HashSet, io::Cursor};
 
 use clap::Parser;
 
@@ -130,6 +131,43 @@ fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u
     clusters
 }
 
+fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
+    let x = s0.p.0 - s1.p.0;
+    let y = s0.p.1 - s1.p.1;
+    x * x + y * y
+}
+
+fn closest_n_idx(
+    saddles: &[Saddle],
+    self_idx: usize,
+    active_idxs: &HashSet<usize>,
+    num: usize,
+) -> Vec<usize> {
+    let mut sorted: Vec<_> = saddles
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            if active_idxs.contains(&i) {
+                Some((i, s.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let target = saddles[self_idx];
+    sorted.sort_by(|(_, a), (_, b)| {
+        saddle_distance2(&target, a)
+            .partial_cmp(&saddle_distance2(&target, b))
+            .unwrap()
+    });
+    let out_len = sorted.len().min(num);
+    sorted[0..out_len].iter().map(|(i, _)| *i).collect()
+}
+
+fn cross(v0: &(f32, f32), v1: &(f32, f32)) -> f32 {
+    v0.0 * v1.1 - v0.1 * v1.0
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
@@ -141,6 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let img_path = args.img;
     let img = ImageReader::open(img_path)?.decode()?;
+    let img_grey = img.to_luma8();
     // let small = image::imageops::resize(&img.to_luma32f(), 100, 100, Triangle);
     let blur: image::ImageBuffer<image::Luma<f32>, Vec<f32>> =
         imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
@@ -178,6 +217,180 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (sx / c.len() as f32, sy / c.len() as f32)
         })
         .collect();
+    println!("before {}", cs.len());
+    let saddle_points = aprilgrid::detector::rochade_refine2(&blur, &cs, 3);
+
+    let smax = saddle_points.iter().fold(f32::MIN, |acc, s| acc.max(s.k)) / 10.0;
+    println!("s thres {}", smax);
+    let min_angle = 30.0;
+    let max_angle = 60.0;
+    let refined: Vec<Saddle> = saddle_points
+        .iter()
+        .filter_map(|s| {
+            if s.k < smax || s.phi < min_angle || s.phi > max_angle {
+                None
+            } else {
+                Some(s.to_owned())
+            }
+        })
+        .collect();
+
+    log_image_as_compressed(&recording, "/cam0", &img);
+    // quad search
+    let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
+    let mut count = 0;
+    while active_idxs.len() >= 4 {
+        let start_idx = active_idxs.iter().next().unwrap().clone();
+        active_idxs.remove(&start_idx);
+        let current_saddle = refined[start_idx];
+        // println!("start idx: {} {} {}", start_idx, refined[start_idx].p.0, refined[start_idx].p.1);
+        let closest_idxs = closest_n_idx(&refined, start_idx, &active_idxs, 20);
+        // let pp = vec![
+        //     current_saddle.p,
+        //     refined[closest_idxs[0]].p,
+        //     refined[closest_idxs[1]].p,
+        //     refined[closest_idxs[2]].p
+        // ];
+        // let color = vec![
+        //     (255, 0, 0, 255),
+        //     (0, 255, 0, 255),
+        //     (0, 0, 255, 255),
+        //     (255, 0, 255, 255),
+        // ];
+        // recording
+        //     .log(
+        //         format!("/cam0/image/q"),
+        //         &rerun::Points2D::new(rerun_shift(&pp)).with_radii([rerun::Radius::new_ui_points(2.0)]).with_colors(color),
+        //     )
+        //     .expect("msg");
+        for i in 2..closest_idxs.len() {
+            let idx_i = closest_idxs[i];
+            let cross_saddle = refined[idx_i];
+            if (current_saddle.theta - cross_saddle.theta).abs() < 10.0 {
+                for j in 0..(i - 1) {
+                    let idx_j = closest_idxs[j];
+                    let side_saddle0 = refined[idx_j];
+                    for k in (j + 1)..i {
+                        let idx_k = closest_idxs[k];
+                        let side_saddle1 = refined[idx_k];
+                        const theta_thres: f32 = 60.0;
+                        if (current_saddle.theta - side_saddle0.theta).abs() < theta_thres
+                            || (current_saddle.theta - side_saddle1.theta).abs() < theta_thres
+                        {
+                            continue;
+                        }
+                        let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
+                        let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
+                        let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
+                        let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
+                        let avg_l = (l0 + l1 + l2 + l3) / 4.0;
+                        let l_ratio = 0.2;
+                        let min_l = avg_l * (1.0 - l_ratio);
+                        let max_l = avg_l * (1.0 + l_ratio);
+                        if l0 < min_l
+                            || l0 > max_l
+                            || l1 < min_l
+                            || l1 > max_l
+                            || l2 < min_l
+                            || l2 > max_l
+                            || l3 < min_l
+                            || l3 > max_l
+                        {
+                            continue;
+                        }
+                        let v0 = (
+                            side_saddle0.p.0 - current_saddle.p.0,
+                            side_saddle0.p.1 - current_saddle.p.1,
+                        );
+                        let v1 = (
+                            side_saddle1.p.0 - current_saddle.p.0,
+                            side_saddle1.p.1 - current_saddle.p.1,
+                        );
+                        let v2 = (
+                            cross_saddle.p.0 - current_saddle.p.0,
+                            cross_saddle.p.1 - current_saddle.p.1,
+                        );
+                        let c0 = cross(&v0, &v2);
+                        let c1 = cross(&v2, &v1);
+                        if c0 * c1 < 0.0 {
+                            continue;
+                        }
+
+                        let pp = if c0 > 0.0 {
+                            vec![
+                                current_saddle.p,
+                                refined[idx_j].p,
+                                refined[idx_i].p,
+                                refined[idx_k].p,
+                            ]
+                        } else {
+                            vec![
+                                current_saddle.p,
+                                refined[idx_k].p,
+                                refined[idx_i].p,
+                                refined[idx_j].p,
+                            ]
+                        };
+                        let homo_points_option =
+                            decode_positions(img.width(), img.height(), &pp, 2, 6, 0.5);
+                        if let Some(homo_points) = homo_points_option {
+                            recording
+                                .log(
+                                    format!("/cam0/image/h"),
+                                    &rerun::Points2D::new(rerun_shift(&homo_points))
+                                        .with_radii([rerun::Radius::new_ui_points(2.0)]),
+                                )
+                                .expect("msg");
+                            let bits = bit_code(&img_grey, &homo_points, 1, 50);
+                            if bits.is_some() {
+                                println!("bits {:036b}", bits.unwrap());
+                                let tag_id_option = best_tag(
+                                    bits.unwrap(),
+                                    3,
+                                    &aprilgrid::tag_families::T36H11.to_vec(),
+                                    6,
+                                );
+                                if tag_id_option.is_some() {
+                                    let tag_id = tag_id_option.unwrap();
+                                    println!("t {}", tag_id.0);
+                                }
+                            }
+                        };
+                        let color = vec![
+                            (255, 0, 0, 255),
+                            (0, 255, 0, 255),
+                            (0, 0, 255, 255),
+                            (255, 0, 255, 255),
+                        ];
+
+                        // recording.set_time_nanos("stable_time", count*10000000);
+                        recording
+                            .log(
+                                format!("/cam0/image/q"),
+                                &rerun::Points2D::new(rerun_shift(&pp))
+                                    .with_radii([rerun::Radius::new_ui_points(2.0)])
+                                    .with_colors(color)
+                                    .with_labels([format!("q{}", count).as_str()]),
+                            )
+                            .expect("msg");
+                        if count < 100 {
+                            println!("{}", count);
+                            println!("s0 {:?}", current_saddle);
+                            println!("s1 {:?}", side_saddle0);
+                            println!("s2 {:?}", side_saddle1);
+                            println!("s3 {:?}", cross_saddle);
+                            println!();
+                        }
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let cs: Vec<(f32, f32)> = refined.iter().map(|s| s.p).collect();
+
+    println!("after {}", cs.len());
     // let m = imageproc::morphology::dilate(&m, imageproc::distance_transform::Norm::L1, 1);
 
     // let b = GrayImage::
@@ -190,8 +403,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // recording.set_time_seconds("stable_time", time_sec);
     // time_sec += one_frame_time;
 
-    log_image_as_compressed(&recording, "/cam0", &img);
-    log_grey_image_as_compressed(&recording, "/cam0", &m);
     recording
         .log(
             format!("/cam0/image/corners"),
