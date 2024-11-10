@@ -14,7 +14,6 @@ exclude = ["/.github/*", "*.ipynb", "./scripts/*", "examples/*", "tests/*"]
 
 [dependencies]
 faer = "0.19.4"
-geo = "0.28.0"
 image = "0.25.4"
 imageproc = "0.25.0"
 itertools = "0.13.0"
