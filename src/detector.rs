@@ -1,8 +1,15 @@
-use std::{collections::HashMap, ops::BitXor};
+use core::f32;
+use std::{
+    collections::{HashMap, HashSet},
+    f32::consts::PI,
+    ops::BitXor,
+};
 
-use crate::{homography, quad, tag_families};
+use crate::image_util::GrayImagef32;
+use crate::{image_util, math_util, tag_families};
 use faer::solvers::SpSolverLstsq;
-use image::{DynamicImage, GenericImageView, GrayImage};
+use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
+use itertools::Itertools;
 
 pub struct TagDetector {
     edge: u8,
@@ -13,17 +20,15 @@ pub struct TagDetector {
 }
 
 pub struct DetectorParams {
-    pub brightness_mean_value: u8,
-    pub quad_corner_compensate_pixel: f32,
-    pub margin: f32,
+    pub min_saddle_angle: f32,
+    pub max_saddle_angle: f32,
 }
 
 impl DetectorParams {
     pub fn default_params() -> DetectorParams {
         DetectorParams {
-            brightness_mean_value: 100,
-            quad_corner_compensate_pixel: 2.5,
-            margin: 0.3,
+            min_saddle_angle: 30.0,
+            max_saddle_angle: 60.0
         }
     }
 }
@@ -43,7 +48,7 @@ pub fn decode_positions(
         return None;
     }
     let side_bits = border_bits * 2 + edge_bits;
-    let h = homography::tag_homography(quad_pts, side_bits, margin);
+    let h = image_util::tag_homography(quad_pts, side_bits, margin);
     Some(
         (border_bits..border_bits + edge_bits)
             .flat_map(|x| {
@@ -59,7 +64,7 @@ pub fn decode_positions(
     )
 }
 
-fn bit_code(
+pub fn bit_code(
     img: &GrayImage,
     decode_pts: &[(f32, f32)],
     valid_brightness_threshold: u8,
@@ -119,7 +124,7 @@ fn rotate_bits(bits: u64, edge_bits: u8) -> u64 {
     b
 }
 
-fn best_tag(bits: u64, thres: u8, tag_family: &[u64], edge_bits: u8) -> Option<(usize, usize)> {
+pub fn best_tag(bits: u64, thres: u8, tag_family: &[u64], edge_bits: u8) -> Option<(usize, usize)> {
     let mut bits = bits;
     for rotated in 0..4 {
         let scores: Vec<u32> = tag_family
@@ -148,12 +153,87 @@ fn best_tag(bits: u64, thres: u8, tag_family: &[u64], edge_bits: u8) -> Option<(
     None
 }
 
-fn rochade_refine(
-    image_input: &GrayImage,
+fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u32)>> {
+    let mut tmp_h_mat = h_mat.clone();
+    let mut clusters = Vec::new();
+    for r in 1..h_mat.height() - 1 {
+        for c in 1..h_mat.width() - 1 {
+            let mut cluster = Vec::new();
+            image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
+            if cluster.len() > 0 {
+                clusters.push(cluster);
+            }
+        }
+    }
+    clusters
+}
+
+fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
+    let x = s0.p.0 - s1.p.0;
+    let y = s0.p.1 - s1.p.1;
+    x * x + y * y
+}
+
+fn closest_n_idx(
+    saddles: &[Saddle],
+    self_idx: usize,
+    active_idxs: &HashSet<usize>,
+    num: usize,
+    same_polarity: bool,
+) -> Vec<usize> {
+    let target = saddles[self_idx];
+    // let polarity = (target.theta - target.theta2).abs() < 1.0;
+    let mut sorted: Vec<_> = saddles
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            if active_idxs.contains(&i) {
+                let polarity =
+                    ((s.theta - target.theta).abs() + (s.theta2 - target.theta2).abs()) < 15.0;
+                if same_polarity && polarity {
+                    return Some((i, s.clone()));
+                } else if !same_polarity && !polarity {
+                    return Some((i, s.clone()));
+                }
+            }
+            None
+        })
+        .collect();
+    sorted.sort_by(|(_, a), (_, b)| {
+        saddle_distance2(&target, a)
+            .partial_cmp(&saddle_distance2(&target, b))
+            .unwrap()
+    });
+    let out_len = sorted.len().min(num);
+    sorted[0..out_len].iter().map(|(i, _)| *i).collect()
+}
+
+fn cross(v0: &(f32, f32), v1: &(f32, f32)) -> f32 {
+    v0.0 * v1.1 - v0.1 * v1.0
+}
+fn dot(v0: &(f32, f32), v1: &(f32, f32)) -> f32 {
+    v0.0 * v1.0 + v0.1 * v1.1
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Saddle {
+    pub p: (f32, f32),
+    pub k: f32,
+    pub theta: f32,
+    pub theta2: f32,
+    pub phi: f32,
+}
+
+pub fn rochade_refine<T>(
+    image_input: &ImageBuffer<Luma<T>, Vec<T>>,
     initial_corners: &Vec<(f32, f32)>,
     half_size_patch: i32,
-) -> Option<Vec<(f32, f32)>> {
-    let mut refined_corners = Vec::<(f32, f32)>::new();
+) -> Vec<Saddle>
+where
+    T: image::Primitive + Into<f32>,
+{
+    const PIXEL_MOVE_THRESHOLD: f32 = 1.0;
+    let mut refined_corners = Vec::<Saddle>::new();
     // kernel
     let kernel_size = (half_size_patch * 2 + 1) as usize;
     let gamma = half_size_patch as f32;
@@ -186,7 +266,7 @@ fn rochade_refine(
             || (round_x - half_size_patch2 < 0)
             || (round_x + half_size_patch2 >= width)
         {
-            return None;
+            continue;
         }
 
         // patch
@@ -204,7 +284,7 @@ fn rochade_refine(
                 let sub_patch_vec: Vec<f32> = patch
                     .view(c as u32, r as u32, kernel_size as u32, kernel_size as u32)
                     .pixels()
-                    .map(|(_, _, v)| v.0[0] as f32)
+                    .map(|(_, _, v)| v.0[0].into())
                     .collect();
                 let conv_p = sub_patch_vec
                     .iter()
@@ -233,8 +313,7 @@ fn rochade_refine(
             }
         }
         let params = mat_a.qr().solve_lstsq(mat_b);
-        // println!("conv {:?}", smooth_sub_image);
-        // println!("params {:?}", params);
+
         let a1 = params[(0, 0)];
         let a2 = params[(1, 0)];
         let a3 = params[(2, 0)];
@@ -245,20 +324,39 @@ fn rochade_refine(
         let fyy = 2.0 * a3;
         let fxy = a2;
         let d = fxx * fyy - fxy * fxy;
+
         // is saddle point
         if d < 0.0 {
-            let (x0, y0) = quad::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
-            if x0.abs() > half_size_patch as f32 || y0.abs() > half_size_patch as f32 {
-                return None;
+            let (x0, y0) = math_util::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
+            // move too much
+            if x0.abs() > PIXEL_MOVE_THRESHOLD || y0.abs() > PIXEL_MOVE_THRESHOLD {
+                continue;
             } else {
-                refined_corners.push((initial_x.round() + x0, initial_y.round() + y0));
+                // Alturki, Abdulrahman S., and John S. Loomis.
+                // "A new X-Corner Detection for Camera Calibration Using Saddle Points."
+                let c5 = (a1 + a3) / 2.0;
+                let c4 = (a1 - a3) / 2.0;
+                let c3 = a2 / 2.0;
+                let k = (c4 * c4 + c3 * c3).sqrt();
+                let phi = (-1.0 * c5 / k).acos() / 2.0 / PI * 180.0;
+                let theta = (c3 / k).asin() / 2.0 / PI * 180.0;
+                let theta2 = (c4 / k).acos() / 2.0 / PI * 180.0;
+                if c5.abs() > 0.5 {
+                    continue;
+                }
+                refined_corners.push(Saddle {
+                    p: (initial_x.round() + x0, initial_y.round() + y0),
+                    k,
+                    theta,
+                    theta2,
+                    phi,
+                });
             }
         } else {
-            return None;
+            continue;
         }
     }
-
-    Some(refined_corners)
+    refined_corners
 }
 impl TagDetector {
     pub fn new(
@@ -277,83 +375,208 @@ impl TagDetector {
             tag_families::TagFamily::T25H7 => TagDetector {
                 edge: 5,
                 border: 2,
-                hamming_distance: 2,
+                hamming_distance: 1,
                 code_list: tag_families::T25H7.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T25H9 => TagDetector {
                 edge: 5,
                 border: 2,
-                hamming_distance: 3,
+                hamming_distance: 1,
                 code_list: tag_families::T25H9.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11 => TagDetector {
                 edge: 6,
                 border: 2,
-                hamming_distance: 3,
+                hamming_distance: 1,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11B1 => TagDetector {
                 edge: 6,
                 border: 1,
-                hamming_distance: 3,
+                hamming_distance: 1,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
         }
     }
+
+    pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
+        let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
+        let hessian_response_mat = image_util::hessian_response(&blur);
+        let min_response = hessian_response_mat
+            .to_vec()
+            .iter()
+            .fold(f32::MAX, |acc, e| acc.min(*e));
+        let min_response_threshold = min_response * 0.05;
+        let saddle_clusters = init_saddle_clusters(&hessian_response_mat, min_response_threshold);
+        let saddle_cluster_centers: Vec<(f32, f32)> = saddle_clusters
+            .iter()
+            .map(|c| {
+                let (sx, sy) = c.iter().fold((0.0, 0.0), |(ax, ay), (ex, ey)| {
+                    (ax + *ex as f32, ay + *ey as f32)
+                });
+                (sx / c.len() as f32, sy / c.len() as f32)
+            })
+            .collect();
+        let saddle_points = rochade_refine(&blur, &saddle_cluster_centers, 2);
+        let smax = saddle_points.iter().fold(f32::MIN, |acc, s| acc.max(s.k)) / 10.0;
+        let refined: Vec<Saddle> = saddle_points
+            .iter()
+            .filter_map(|s| {
+                if s.k < smax || s.phi < self.detector_params.min_saddle_angle || s.phi > self.detector_params.max_saddle_angle {
+                    None
+                } else {
+                    Some(s.to_owned())
+                }
+            })
+            .collect();
+        refined
+    }
+    // TODO too slow
     pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
+        let mut detected_tags = HashMap::new();
+        let mut avg_tag_l = Vec::new();
         let img_grey = img.to_luma8();
-        let img_adjust_bri =
-            quad::adjust_brightness(img, self.detector_params.brightness_mean_value);
-        let quads = quad::find_quad(&img_adjust_bri, 400.0);
-        let mut detected_tags = HashMap::<u32, [(f32, f32); 4]>::new();
-        for c in quads.iter() {
-            let homo_points_option = decode_positions(
-                img.width(),
-                img.height(),
-                c,
-                self.border,
-                self.edge,
-                self.detector_params.margin,
-            );
-            if let Some(homo_points) = homo_points_option {
-                let bits = bit_code(&img_grey, &homo_points, 30, 5);
-                if bits.is_none() {
-                    continue;
-                }
-                let tag_id_option = best_tag(
-                    bits.unwrap(),
-                    self.hamming_distance,
-                    &self.code_list,
-                    self.edge,
-                );
-                if tag_id_option.is_none() {
-                    continue;
-                }
-                let tag_id = tag_id_option.unwrap();
+        let refined = self.refined_saddle_points(&img);
+        if refined.len() < 4 {
+            return detected_tags;
+        }
+        let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
 
-                // compensate dilation causing quad corner shift
-                let quad_center = c
-                    .iter()
-                    .fold((0.0, 0.0), |acc, e| (acc.0 + e.0, acc.1 + e.1));
-                let (qcx, qcy) = (quad_center.0 / 4.0, quad_center.1 / 4.0);
+        let mut start_idx = refined.len() / 2;
+        while active_idxs.len() >= 4 {
+            if !active_idxs.remove(&start_idx) {
+                start_idx = active_idxs.iter().next().unwrap().clone();
+                continue;
+            }
+            let current_saddle = refined[start_idx];
+            // println!("start idx: {} {} {}", start_idx, refined[start_idx].p.0, refined[start_idx].p.1);
+            let closest_idxs_same = closest_n_idx(&refined, start_idx, &active_idxs, 15, true);
+            let closest_idxs_diff = closest_n_idx(&refined, start_idx, &active_idxs, 30, false);
+            let mut found = false;
+            for idx_i in &closest_idxs_same {
+                if found {
+                    break;
+                }
+                for jk in closest_idxs_diff.iter().combinations(2) {
+                    let idx_i = *idx_i;
+                    let idx_j = *jk[0];
+                    let idx_k = *jk[1];
+                    let cross_saddle = refined[idx_i];
+                    let side_saddle0 = refined[idx_j];
+                    let side_saddle1 = refined[idx_k];
+                    // let relative_theta_sort = [i, j, k]
+                    if (current_saddle.theta - cross_saddle.theta).abs() > 10.0 {
+                        continue;
+                    }
+                    if (side_saddle0.theta - side_saddle1.theta).abs() > 10.0 {
+                        continue;
+                    }
 
-                let mut c: Vec<(f32, f32)> = c
-                    .iter()
-                    .map(|(qx, qy)| {
-                        let (vx, vy) = (qx - qcx, qy - qcy);
-                        let n = (vx * vx + vy * vy).sqrt();
-                        let scale = self.detector_params.quad_corner_compensate_pixel;
-                        (qx + vx / n * scale, qy + vy / n * scale)
-                    })
-                    .collect();
-                c.rotate_left(tag_id.1);
-                if let Some(refined) = rochade_refine(&img_adjust_bri.to_luma8(), &c, 4) {
-                    let refined_arr: [(f32, f32); 4] = refined.try_into().unwrap();
-                    detected_tags.insert(tag_id.0 as u32, refined_arr);
+                    let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
+                    let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
+                    let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
+                    let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
+                    let avg_l = (l0 + l1 + l2 + l3) / 4.0;
+                    let l_ratio = 0.3;
+                    let min_l = avg_l * (1.0 - l_ratio);
+                    let max_l = avg_l * (1.0 + l_ratio);
+                    if avg_tag_l.len() > 4 {
+                        let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
+                        if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
+                            continue;
+                        }
+                    }
+                    if l0 < min_l
+                        || l0 > max_l
+                        || l1 < min_l
+                        || l1 > max_l
+                        || l2 < min_l
+                        || l2 > max_l
+                        || l3 < min_l
+                        || l3 > max_l
+                    {
+                        continue;
+                    }
+                    let v0 = (
+                        side_saddle0.p.0 - current_saddle.p.0,
+                        side_saddle0.p.1 - current_saddle.p.1,
+                    );
+                    let v1 = (
+                        side_saddle1.p.0 - current_saddle.p.0,
+                        side_saddle1.p.1 - current_saddle.p.1,
+                    );
+                    let v2 = (
+                        cross_saddle.p.0 - current_saddle.p.0,
+                        cross_saddle.p.1 - current_saddle.p.1,
+                    );
+                    let c0 = cross(&v0, &v2);
+                    let c1 = cross(&v2, &v1);
+                    if c0 * c1 < 0.0 {
+                        continue;
+                    }
+                    if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+                        continue;
+                    }
+
+                    let pp = if c0 > 0.0 {
+                        vec![
+                            current_saddle.p,
+                            refined[idx_j].p,
+                            refined[idx_i].p,
+                            refined[idx_k].p,
+                        ]
+                    } else {
+                        vec![
+                            current_saddle.p,
+                            refined[idx_k].p,
+                            refined[idx_i].p,
+                            refined[idx_j].p,
+                        ]
+                    };
+                    let homo_points_option = decode_positions(
+                        img.width(),
+                        img.height(),
+                        &pp,
+                        self.border,
+                        self.edge,
+                        0.5,
+                    );
+                    if let Some(homo_points) = homo_points_option {
+                        let bits = bit_code(&img_grey, &homo_points, 10, 3);
+                        if bits.is_some() {
+                            let tag_id_option = best_tag(
+                                bits.unwrap(),
+                                self.hamming_distance,
+                                &self.code_list,
+                                self.edge,
+                            );
+                            if tag_id_option.is_some() {
+                                active_idxs.remove(&idx_i);
+                                active_idxs.remove(&idx_j);
+                                active_idxs.remove(&idx_k);
+                                for next_idx in &closest_idxs_same {
+                                    if active_idxs.contains(next_idx) {
+                                        start_idx = *next_idx;
+                                        break;
+                                    }
+                                }
+                                avg_tag_l.push(avg_l);
+                                let tag_id = tag_id_option.unwrap();
+
+                                let mut pp = pp;
+                                pp.rotate_left(tag_id.1);
+                                pp.reverse();
+                                let refined_arr: [(f32, f32); 4] = pp.try_into().unwrap();
+                                detected_tags.insert(tag_id.0 as u32, refined_arr);
+                                found = true;
+                                break;
+                            }
+                        }
+                    };
                 }
             }
         }

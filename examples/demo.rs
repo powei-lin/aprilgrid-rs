@@ -39,35 +39,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
     let dataset_root = "data";
+    // let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
+    // let dataset_root =
+    //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
+    // let dataset_root = "tests/data";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
     // let mut time_sec = 0.0;
     // let fps = 60.0;
     // let one_frame_time = 1.0 / fps;
-    let detector_params = Some(aprilgrid::detector::DetectorParams {
-        brightness_mean_value: 60,
-        ..aprilgrid::detector::DetectorParams::default_params()
-    });
     // let detector_params = None;
-    let detector =
-        aprilgrid::detector::TagDetector::new(&aprilgrid::TagFamily::T36H11, detector_params);
+    let detector = aprilgrid::detector::TagDetector::new(&aprilgrid::TagFamily::T36H11, None);
     for path in img_paths {
-        let time_ns: i64 = path
-            .as_ref()
-            .unwrap()
-            .file_stem()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .parse()
-            .unwrap();
+        // let time_ns: i64 = path
+        //     .as_ref()
+        //     .unwrap()
+        //     .file_stem()
+        //     .unwrap()
+        //     .to_str()
+        //     .unwrap()
+        //     .parse()
+        //     .unwrap();
         let img0 = ImageReader::open(path.unwrap())?.decode()?;
 
         let mut corner_colors = Vec::new();
         let mut corner_list = Vec::new();
         let mut decode_points = Vec::new();
         let mut tag_colors = Vec::new();
+        let mut memo = Vec::new();
 
-        recording.set_time_nanos("stable_time", time_ns);
+        // recording.set_time_nanos("stable_time", time_ns);
         // recording.set_time_seconds("stable_time", time_sec);
         // time_sec += one_frame_time;
         let tags = detector.detect(&img0);
@@ -76,27 +76,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(mut homography_points) =
                 aprilgrid::detector::decode_positions(img0.width(), img0.height(), &c, 2, 6, 0.5)
             {
-                corner_colors.push((255, 0, 0, 255));
-                corner_colors.push((255, 255, 0, 255));
-                corner_colors.push((255, 0, 255, 255));
-                corner_colors.push((0, 255, 255, 255));
-                corner_list.append(&mut c);
                 tag_colors.append(&mut vec![
                     id_to_color(t_id as usize);
                     homography_points.len()
                 ]);
                 decode_points.append(&mut homography_points);
             }
+            corner_colors.push((255, 0, 0, 255));
+            corner_colors.push((255, 255, 0, 255));
+            corner_colors.push((255, 0, 255, 255));
+            corner_colors.push((0, 255, 255, 255));
+            corner_list.append(&mut c);
+            for i in 0..4{
+                memo.push(format!("t{} {}", t_id, i));
+            }
         }
 
         log_image_as_compressed(&recording, "/cam0", &img0);
-        log_image_as_compressed(&recording, "/cam0_color", &img0);
+        // log_image_as_compressed(&recording, "/cam0_contrast", &img0.adjust_contrast(200.0));
+        // log_image_as_compressed(&recording, "/cam0_color", &img0);
         recording
             .log(
                 format!("/cam0/corners"),
                 &rerun::Points2D::new(rerun_shift(&corner_list))
                     .with_colors(corner_colors)
-                    .with_radii([rerun::Radius::new_ui_points(2.0)]),
+                    .with_radii([rerun::Radius::new_ui_points(2.0)]).with_labels(memo),
             )
             .expect("msg");
         recording
