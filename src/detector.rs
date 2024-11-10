@@ -3,7 +3,9 @@ use std::{collections::HashMap, f32::consts::PI, ops::BitXor};
 
 use crate::{homography, quad, tag_families};
 use faer::solvers::SpSolverLstsq;
-use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
+use image::{DynamicImage, GenericImage, GenericImageView, GrayImage, ImageBuffer, Luma};
+
+type GrayImagef32 = image::ImageBuffer<image::Luma<f32>, Vec<f32>>;
 
 pub struct TagDetector {
     edge: u8,
@@ -147,6 +149,73 @@ pub fn best_tag(bits: u64, thres: u8, tag_family: &[u64], edge_bits: u8) -> Opti
         bits = rotate_bits(bits, edge_bits);
     }
     None
+}
+
+fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
+    let mut out = GrayImagef32::new(img.width(), img.height());
+    for r in 1..(img.height() - 1) {
+        for c in 1..(img.width() - 1) {
+            let (v11, v12, v13, v21, v22, v23, v31, v32, v33) = unsafe {
+                (
+                    img.unsafe_get_pixel(c - 1, r - 1).0[0],
+                    img.unsafe_get_pixel(c, r - 1).0[0],
+                    img.unsafe_get_pixel(c + 1, r - 1).0[0],
+                    img.unsafe_get_pixel(c - 1, r).0[0],
+                    img.unsafe_get_pixel(c, r).0[0],
+                    img.unsafe_get_pixel(c + 1, r).0[0],
+                    img.unsafe_get_pixel(c - 1, r + 1).0[0],
+                    img.unsafe_get_pixel(c, r + 1).0[0],
+                    img.unsafe_get_pixel(c + 1, r + 1).0[0],
+                )
+            };
+            let lxx = v21 - 2.0 * v22 + v23;
+            let lyy = v12 - 2.0 * v22 + v32;
+            let lxy = (v13 - v11 + v31 - v33) / 4.0;
+
+            /* normalize and write out */
+            unsafe {
+                out.unsafe_put_pixel(c, r, [(lxx * lyy - lxy * lxy)].into());
+            }
+        }
+    }
+    out
+}
+
+fn pixel_bfs(
+    mat: &mut GrayImagef32,
+    cluster: &mut Vec<(u32, u32)>,
+    x: u32,
+    y: u32,
+    threshold: f32,
+) {
+    if x < mat.width() && y < mat.height() {
+        let v = unsafe { mat.unsafe_get_pixel(x, y).0[0] };
+        if v < threshold {
+            cluster.push((x, y));
+            unsafe {
+                mat.unsafe_put_pixel(x, y, [f32::MAX].into());
+            }
+            pixel_bfs(mat, cluster, x - 1, y, threshold);
+            pixel_bfs(mat, cluster, x + 1, y, threshold);
+            pixel_bfs(mat, cluster, x, y + 1, threshold);
+            pixel_bfs(mat, cluster, x, y + 1, threshold);
+        }
+    }
+}
+
+fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u32)>> {
+    let mut tmp_h_mat = h_mat.clone();
+    let mut clusters = Vec::new();
+    for r in 1..h_mat.height() - 1 {
+        for c in 1..h_mat.width() - 1 {
+            let mut cluster = Vec::new();
+            pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
+            if cluster.len() > 0 {
+                clusters.push(cluster);
+            }
+        }
+    }
+    clusters
 }
 
 pub fn rochade_refine<T>(
@@ -380,6 +449,7 @@ where
             let (x0, y0) = quad::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
             // move too much
             if x0.abs() > 1.0 || y0.abs() > 1.0 {
+                println!("moving {:0.4} {:0.4} {} {}", initial_x, initial_y, x0, y0);
                 continue;
             } else {
                 // Alturki, Abdulrahman S., and John S. Loomis.
@@ -501,5 +571,43 @@ impl TagDetector {
             }
         }
         detected_tags
+    }
+    pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
+        let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
+        let hessian_response_mat = hessian_response(&blur);
+        let min_response = hessian_response_mat
+            .to_vec()
+            .iter()
+            .fold(f32::MAX, |acc, e| acc.min(*e));
+        let min_response_threshold = min_response * 0.05;
+        let saddle_clusters = init_saddle_clusters(&hessian_response_mat, min_response_threshold);
+        let saddle_cluster_centers: Vec<(f32, f32)> = saddle_clusters
+            .iter()
+            .map(|c| {
+                let (sx, sy) = c.iter().fold((0.0, 0.0), |(ax, ay), (ex, ey)| {
+                    (ax + *ex as f32, ay + *ey as f32)
+                });
+                (sx / c.len() as f32, sy / c.len() as f32)
+            })
+            .collect();
+        let saddle_points = rochade_refine2(&blur, &saddle_cluster_centers, 2);
+        let smax = saddle_points.iter().fold(f32::MIN, |acc, s| acc.max(s.k)) / 10.0;
+        let min_angle = 30.0;
+        let max_angle = 60.0;
+        let refined: Vec<Saddle> = saddle_points
+            .iter()
+            .filter_map(|s| {
+                if s.k < smax || s.phi < min_angle || s.phi > max_angle {
+                    None
+                } else {
+                    Some(s.to_owned())
+                }
+            })
+            .collect();
+        refined
+    }
+    pub fn detect2(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
+        let img_grey = img.to_luma8();
+        HashMap::new()
     }
 }
