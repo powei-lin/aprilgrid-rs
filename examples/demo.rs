@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             corner_colors.push((255, 0, 255, 255));
             corner_colors.push((0, 255, 255, 255));
             corner_list.append(&mut c);
-            for i in 0..4{
+            for i in 0..4 {
                 memo.push(format!("t{} {}", t_id, i));
             }
         }
@@ -100,7 +100,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("/cam0/corners"),
                 &rerun::Points2D::new(rerun_shift(&corner_list))
                     .with_colors(corner_colors)
-                    .with_radii([rerun::Radius::new_ui_points(2.0)]).with_labels(memo),
+                    .with_radii([rerun::Radius::new_ui_points(2.0)])
+                    .with_labels(memo),
             )
             .expect("msg");
         recording
