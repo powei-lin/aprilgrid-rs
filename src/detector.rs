@@ -20,6 +20,7 @@ pub struct TagDetector {
 }
 
 pub struct DetectorParams {
+    pub tag_spacing_ratio: f32,
     pub min_saddle_angle: f32,
     pub max_saddle_angle: f32,
 }
@@ -27,6 +28,7 @@ pub struct DetectorParams {
 impl DetectorParams {
     pub fn default_params() -> DetectorParams {
         DetectorParams {
+            tag_spacing_ratio: 0.3,
             min_saddle_angle: 30.0,
             max_saddle_angle: 60.0,
         }
@@ -230,6 +232,11 @@ pub struct Saddle {
     pub phi: f32,
 }
 
+pub struct Tag {
+    pub id: u32,
+    pub p: [(f32, f32); 4],
+}
+
 pub fn rochade_refine<T>(
     image_input: &ImageBuffer<Luma<T>, Vec<T>>,
     initial_corners: &Vec<(f32, f32)>,
@@ -364,6 +371,60 @@ where
     }
     refined_corners
 }
+pub fn is_posible_quad(
+    current_saddle: &Saddle,
+    cross_saddle: &Saddle,
+    side_saddle0: &Saddle,
+    side_saddle1: &Saddle,
+) -> bool {
+    if theta_distance(current_saddle.theta, cross_saddle.theta) > 10.0 {
+        return false;
+    }
+    if theta_distance(side_saddle0.theta, side_saddle1.theta) > 10.0 {
+        return false;
+    }
+
+    let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
+    let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
+    let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
+    let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
+    let avg_l = (l0 + l1 + l2 + l3) / 4.0;
+    let l_ratio = 0.3;
+    let min_l = avg_l * (1.0 - l_ratio);
+    let max_l = avg_l * (1.0 + l_ratio);
+    if l0 < min_l
+        || l0 > max_l
+        || l1 < min_l
+        || l1 > max_l
+        || l2 < min_l
+        || l2 > max_l
+        || l3 < min_l
+        || l3 > max_l
+    {
+        return false;
+    }
+    let v0 = (
+        side_saddle0.p.0 - current_saddle.p.0,
+        side_saddle0.p.1 - current_saddle.p.1,
+    );
+    let v1 = (
+        side_saddle1.p.0 - current_saddle.p.0,
+        side_saddle1.p.1 - current_saddle.p.1,
+    );
+    let v2 = (
+        cross_saddle.p.0 - current_saddle.p.0,
+        cross_saddle.p.1 - current_saddle.p.1,
+    );
+    let c0 = cross(&v0, &v2);
+    let c1 = cross(&v2, &v1);
+    if c0 * c1 < 0.0 {
+        return false;
+    }
+    if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+        return false;
+    }
+    true
+}
 impl TagDetector {
     pub fn new(
         tag_family: &tag_families::TagFamily,
@@ -444,6 +505,124 @@ impl TagDetector {
             .collect();
         refined
     }
+
+    fn find_one_target(
+        &self,
+        refined: &[Saddle],
+        img_grey: &GrayImage,
+    ) -> Option<(Tag, HashSet<usize>)> {
+        let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
+
+        let mut start_idx = active_idxs.iter().next().unwrap().clone();
+        while active_idxs.len() >= 4 {
+            if !active_idxs.remove(&start_idx) {
+                start_idx = active_idxs.iter().next().unwrap().clone();
+                continue;
+            }
+            let current_saddle = refined[start_idx];
+            let closest_idxs_same = closest_n_idx(&refined, start_idx, &active_idxs, 15, true);
+            let closest_idxs_diff = closest_n_idx(&refined, start_idx, &active_idxs, 30, false);
+            for idx_i in &closest_idxs_same {
+                for jk in closest_idxs_diff.iter().combinations(2) {
+                    let idx_i = *idx_i;
+                    let idx_j = *jk[0];
+                    let idx_k = *jk[1];
+                    let cross_saddle = refined[idx_i];
+                    let side_saddle0 = refined[idx_j];
+                    let side_saddle1 = refined[idx_k];
+                    if !is_posible_quad(
+                        &current_saddle,
+                        &cross_saddle,
+                        &side_saddle0,
+                        &side_saddle1,
+                    ) {
+                        continue;
+                    }
+
+                    let v0 = (
+                        side_saddle0.p.0 - current_saddle.p.0,
+                        side_saddle0.p.1 - current_saddle.p.1,
+                    );
+                    let v1 = (
+                        side_saddle1.p.0 - current_saddle.p.0,
+                        side_saddle1.p.1 - current_saddle.p.1,
+                    );
+                    let v2 = (
+                        cross_saddle.p.0 - current_saddle.p.0,
+                        cross_saddle.p.1 - current_saddle.p.1,
+                    );
+                    let c0 = cross(&v0, &v2);
+                    let c1 = cross(&v2, &v1);
+                    if c0 * c1 < 0.0 {
+                        continue;
+                    }
+                    if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+                        continue;
+                    }
+
+                    let quad_points = if c0 > 0.0 {
+                        vec![
+                            current_saddle.p,
+                            refined[idx_j].p,
+                            refined[idx_i].p,
+                            refined[idx_k].p,
+                        ]
+                    } else {
+                        vec![
+                            current_saddle.p,
+                            refined[idx_k].p,
+                            refined[idx_i].p,
+                            refined[idx_j].p,
+                        ]
+                    };
+                    if let Some((tag_id, refined_arr)) =
+                        self.try_decode_quad(&img_grey, &quad_points)
+                    {
+                        active_idxs.remove(&idx_i);
+                        active_idxs.remove(&idx_j);
+                        active_idxs.remove(&idx_k);
+                        let tag = Tag {
+                            id: tag_id as u32,
+                            p: refined_arr,
+                        };
+                        return Some((tag, active_idxs));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn try_decode_quad(
+        &self,
+        img_grey: &GrayImage,
+        quad_points: &[(f32, f32)],
+    ) -> Option<(usize, [(f32, f32); 4])> {
+        let homo_points_option = decode_positions(
+            img_grey.width(),
+            img_grey.height(),
+            quad_points,
+            self.border,
+            self.edge,
+            0.5,
+        );
+        if let Some(homo_points) = homo_points_option {
+            let bits_option = bit_code(&img_grey, &homo_points, 10, 3);
+            if let Some(bits) = bits_option {
+                let tag_id_option =
+                    best_tag(bits, self.hamming_distance, &self.code_list, self.edge);
+                if let Some((tag_id, rotation)) = tag_id_option {
+                    let mut new_q_pts = quad_points.to_owned();
+                    new_q_pts.rotate_left(rotation);
+                    new_q_pts.reverse();
+                    let refined_arr: [(f32, f32); 4] = new_q_pts.try_into().unwrap();
+                    return Some((tag_id, refined_arr));
+                }
+            }
+        }
+        None
+    }
+
     // TODO too slow
     pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
@@ -477,11 +656,12 @@ impl TagDetector {
                     let cross_saddle = refined[idx_i];
                     let side_saddle0 = refined[idx_j];
                     let side_saddle1 = refined[idx_k];
-                    // let relative_theta_sort = [i, j, k]
-                    if (current_saddle.theta - cross_saddle.theta).abs() > 10.0 {
-                        continue;
-                    }
-                    if (side_saddle0.theta - side_saddle1.theta).abs() > 10.0 {
+                    if !is_posible_quad(
+                        &current_saddle,
+                        &cross_saddle,
+                        &side_saddle0,
+                        &side_saddle1,
+                    ) {
                         continue;
                     }
 
@@ -490,25 +670,11 @@ impl TagDetector {
                     let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
                     let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
                     let avg_l = (l0 + l1 + l2 + l3) / 4.0;
-                    let l_ratio = 0.3;
-                    let min_l = avg_l * (1.0 - l_ratio);
-                    let max_l = avg_l * (1.0 + l_ratio);
                     if avg_tag_l.len() > 4 {
                         let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
                         if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
                             continue;
                         }
-                    }
-                    if l0 < min_l
-                        || l0 > max_l
-                        || l1 < min_l
-                        || l1 > max_l
-                        || l2 < min_l
-                        || l2 > max_l
-                        || l3 < min_l
-                        || l3 > max_l
-                    {
-                        continue;
                     }
                     let v0 = (
                         side_saddle0.p.0 - current_saddle.p.0,
@@ -531,7 +697,7 @@ impl TagDetector {
                         continue;
                     }
 
-                    let pp = if c0 > 0.0 {
+                    let quad_points = if c0 > 0.0 {
                         vec![
                             current_saddle.p,
                             refined[idx_j].p,
@@ -546,48 +712,38 @@ impl TagDetector {
                             refined[idx_j].p,
                         ]
                     };
-                    let homo_points_option = decode_positions(
-                        img.width(),
-                        img.height(),
-                        &pp,
-                        self.border,
-                        self.edge,
-                        0.5,
-                    );
-                    if let Some(homo_points) = homo_points_option {
-                        let bits = bit_code(&img_grey, &homo_points, 10, 3);
-                        if bits.is_some() {
-                            let tag_id_option = best_tag(
-                                bits.unwrap(),
-                                self.hamming_distance,
-                                &self.code_list,
-                                self.edge,
-                            );
-                            if tag_id_option.is_some() {
-                                active_idxs.remove(&idx_i);
-                                active_idxs.remove(&idx_j);
-                                active_idxs.remove(&idx_k);
-                                for next_idx in &closest_idxs_same {
-                                    if active_idxs.contains(next_idx) {
-                                        start_idx = *next_idx;
-                                        break;
-                                    }
-                                }
-                                avg_tag_l.push(avg_l);
-                                let tag_id = tag_id_option.unwrap();
-
-                                let mut pp = pp;
-                                pp.rotate_left(tag_id.1);
-                                pp.reverse();
-                                let refined_arr: [(f32, f32); 4] = pp.try_into().unwrap();
-                                detected_tags.insert(tag_id.0 as u32, refined_arr);
-                                found = true;
+                    if let Some((tag_id, refined_arr)) =
+                        self.try_decode_quad(&img_grey, &quad_points)
+                    {
+                        active_idxs.remove(&idx_i);
+                        active_idxs.remove(&idx_j);
+                        active_idxs.remove(&idx_k);
+                        for next_idx in &closest_idxs_same {
+                            if active_idxs.contains(next_idx) {
+                                start_idx = *next_idx;
                                 break;
                             }
                         }
-                    };
+                        avg_tag_l.push(avg_l);
+                        detected_tags.insert(tag_id as u32, refined_arr);
+                        found = true;
+                        break;
+                    }
                 }
             }
+        }
+        detected_tags
+    }
+
+    pub fn detect2(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
+        let mut detected_tags = HashMap::new();
+        let img_grey = img.to_luma8();
+        let refined = self.refined_saddle_points(&img);
+        if refined.len() < 4 {
+            return detected_tags;
+        }
+        if let Some((tag, _)) = self.find_one_target(&refined, &img_grey) {
+            detected_tags.insert(tag.id, tag.p);
         }
         detected_tags
     }
