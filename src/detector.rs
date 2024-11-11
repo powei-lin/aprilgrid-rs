@@ -28,7 +28,7 @@ impl DetectorParams {
     pub fn default_params() -> DetectorParams {
         DetectorParams {
             min_saddle_angle: 30.0,
-            max_saddle_angle: 60.0
+            max_saddle_angle: 60.0,
         }
     }
 }
@@ -173,6 +173,15 @@ fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
     let y = s0.p.1 - s1.p.1;
     x * x + y * y
 }
+fn theta_distance(t0: f32, t1: f32) -> f32 {
+    let mut d = t0 - t1 + PI / 2.0;
+    if d < 0.0 {
+        d += PI;
+    } else if d > PI {
+        d -= PI;
+    }
+    (d - PI / 2.0).abs()
+}
 
 fn closest_n_idx(
     saddles: &[Saddle],
@@ -188,11 +197,9 @@ fn closest_n_idx(
         .enumerate()
         .filter_map(|(i, s)| {
             if active_idxs.contains(&i) {
-                let polarity =
-                    ((s.theta - target.theta).abs() + (s.theta2 - target.theta2).abs()) < 15.0;
-                if same_polarity && polarity {
+                if same_polarity && theta_distance(s.theta, target.theta) < 5.0 {
                     return Some((i, s.clone()));
-                } else if !same_polarity && !polarity {
+                } else if !same_polarity && theta_distance(s.theta, target.theta) > 80.0 {
                     return Some((i, s.clone()));
                 }
             }
@@ -220,7 +227,6 @@ pub struct Saddle {
     pub p: (f32, f32),
     pub k: f32,
     pub theta: f32,
-    pub theta2: f32,
     pub phi: f32,
 }
 
@@ -339,16 +345,16 @@ where
                 let c3 = a2 / 2.0;
                 let k = (c4 * c4 + c3 * c3).sqrt();
                 let phi = (-1.0 * c5 / k).acos() / 2.0 / PI * 180.0;
-                let theta = (c3 / k).asin() / 2.0 / PI * 180.0;
-                let theta2 = (c4 / k).acos() / 2.0 / PI * 180.0;
-                if c5.abs() > 0.5 {
+
+                let theta = c3.atan2(c4) / 2.0 / PI * 180.0;
+
+                if c5.abs() >= k {
                     continue;
                 }
                 refined_corners.push(Saddle {
                     p: (initial_x.round() + x0, initial_y.round() + y0),
                     k,
                     theta,
-                    theta2,
                     phi,
                 });
             }
@@ -426,7 +432,10 @@ impl TagDetector {
         let refined: Vec<Saddle> = saddle_points
             .iter()
             .filter_map(|s| {
-                if s.k < smax || s.phi < self.detector_params.min_saddle_angle || s.phi > self.detector_params.max_saddle_angle {
+                if s.k < smax
+                    || s.phi < self.detector_params.min_saddle_angle
+                    || s.phi > self.detector_params.max_saddle_angle
+                {
                     None
                 } else {
                     Some(s.to_owned())
