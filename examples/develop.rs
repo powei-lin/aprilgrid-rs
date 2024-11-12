@@ -1,5 +1,8 @@
-use aprilgrid::detector::{best_tag, bit_code, decode_positions, Saddle};
+use aprilgrid::board::Board;
+use aprilgrid::detector::{best_tag, bit_code, decode_positions};
+use aprilgrid::saddle::{is_valid_quad, Saddle};
 use core::f32;
+use glam::{Vec2, Vec2Swizzles};
 use glob::glob;
 use image::{
     imageops::FilterType::{Nearest, Triangle},
@@ -12,6 +15,7 @@ use rand_chacha::ChaCha8Rng;
 use rerun::RecordingStream;
 use std::{
     collections::{HashMap, HashSet},
+    f32::consts::PI,
     io::Cursor,
     usize,
 };
@@ -68,117 +72,6 @@ fn rerun_shift(p2ds: &[(f32, f32)]) -> Vec<(f32, f32)> {
     p2ds.iter().map(|(x, y)| (*x + 0.5, *y + 0.5)).collect()
 }
 
-fn is_valid_quad(s0: &Saddle, d0: &Saddle, s1: &Saddle, d1: &Saddle) -> bool {
-    if aprilgrid::math_util::theta_distance(d0.theta, d1.theta) > 3.0 {
-        return false;
-    }
-    let v01 = (d0.p.0 - s0.p.0, d0.p.1 - s0.p.1);
-    let v03 = (d1.p.0 - s0.p.0, d1.p.1 - s0.p.1);
-    let v02 = (s1.p.0 - s0.p.0, s1.p.1 - s0.p.1);
-    let c0 = aprilgrid::math_util::cross(&v01, &v02);
-    let c1 = aprilgrid::math_util::cross(&v02, &v03);
-    if c0 * c1 < 0.0 {
-        return false;
-    }
-    let v12 = (s1.p.0 - d0.p.0, s1.p.1 - d0.p.1);
-    let v23 = (d1.p.0 - s1.p.0, d1.p.1 - s1.p.1);
-    let c01 = aprilgrid::math_util::cross(&v01, &v12);
-    let c12 = aprilgrid::math_util::cross(&v12, &v23);
-    if c01 * c12 < 0.0 {
-        return false;
-    }
-    let v30 = (s0.p.0 - d1.p.0, s0.p.1 - d1.p.1);
-    let a0 = aprilgrid::math_util::angle_degree(&v01, &v12);
-    let a1 = aprilgrid::math_util::angle_degree(&v12, &v23);
-    let a2 = aprilgrid::math_util::angle_degree(&v23, &v30);
-    let a3 = aprilgrid::math_util::angle_degree(&v30, &v01);
-    if (a0 - a2).abs() > 10.0 || (a1 - a3).abs() > 10.0 {
-        return false;
-    }
-    if aprilgrid::math_util::dot(&v01, &v02) < 0.0 || aprilgrid::math_util::dot(&v03, &v02) < 0.0 {
-        return false;
-    }
-    true
-}
-
-#[derive(Hash, PartialEq, Eq)]
-struct BoardIdx {
-    x: i32,
-    y: i32,
-}
-impl BoardIdx {
-    pub fn new(x: i32, y: i32) -> BoardIdx {
-        BoardIdx { x, y }
-    }
-}
-
-struct Board<'a> {
-    refined: &'a [Saddle],
-    active_idxs: HashSet<usize>,
-    found_board_idxs: HashMap<BoardIdx, Option<[usize; 4]>>,
-    tree: KdTree<f32, 2>,
-    score: u32,
-}
-impl<'a> Board<'a> {
-    pub fn new(
-        refined: &'a [Saddle],
-        active_idxs: &HashSet<usize>,
-        quad_idxs: &[usize; 4],
-        tree: &KdTree<f32, 2>,
-    ) -> Board<'a> {
-        let mut active_idxs = active_idxs.clone();
-        let mut tree = tree.clone();
-        for i in &quad_idxs[1..] {
-            active_idxs.remove(i);
-            tree.remove(&refined[*i].arr(), *i as u64);
-        }
-        Board {
-            refined,
-            active_idxs,
-            found_board_idxs: HashMap::from([(BoardIdx::new(0, 0), Some(quad_idxs.clone()))]),
-            tree,
-            score: 1,
-        }
-    }
-}
-
-fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> Vec<[usize; 4]> {
-    let mut out = Vec::new();
-    let s0 = refined[s0_idx];
-    let nearest = tree.nearest_n::<SquaredEuclidean>(&s0.arr(), 50);
-    let mut same_p_idxs = Vec::new();
-    let mut diff_p_idxs = Vec::new();
-    for n in nearest {
-        let s = refined[n.item as usize];
-        let theta_diff = aprilgrid::math_util::theta_distance(s0.theta, s.theta);
-        if theta_diff < 3.0 {
-            same_p_idxs.push(n.item as usize);
-        } else if theta_diff > 80.0 {
-            diff_p_idxs.push(n.item as usize);
-        }
-    }
-    for s1_idx in same_p_idxs {
-        let s1 = refined[s1_idx];
-        for dp in diff_p_idxs.iter().combinations(2) {
-            let d0 = refined[*dp[0]];
-            let d1 = refined[*dp[1]];
-            if !is_valid_quad(&s0, &d0, &s1, &d1) {
-                continue;
-            }
-            let v01 = (d0.p.0 - s0.p.0, d0.p.1 - s0.p.1);
-            let v02 = (s1.p.0 - s0.p.0, s1.p.1 - s0.p.1);
-            let c0 = aprilgrid::math_util::cross(&v01, &v02);
-            let quad_idxs = if c0 > 0.0 {
-                [s0_idx, *dp[0], s1_idx, *dp[1]]
-            } else {
-                [s0_idx, *dp[1], s1_idx, *dp[0]]
-            };
-            out.push(quad_idxs);
-        }
-    }
-    out
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
@@ -203,18 +96,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while active_idxs.len() > 4 {
         let mut tree = tree.clone();
         let s0_idx = active_idxs.iter().next().unwrap().clone();
+        active_idxs.remove(&s0_idx);
+        // let s0_idx = 80;
         tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
-        let quads = init_quads(&refined, s0_idx, &tree);
+        let quads = aprilgrid::detector::init_quads(&refined, s0_idx, &tree);
         for q in quads {
-            let points = [
-                refined[q[0]].arr(),
-                refined[q[1]].arr(),
-                refined[q[2]].arr(),
-                refined[q[3]].arr(),
-                refined[q[0]].arr(),
+            let points = vec![
+                refined[q[0]].p,
+                refined[q[1]].p,
+                refined[q[2]].p,
+                refined[q[3]].p,
+                refined[q[0]].p,
             ];
-            let board = Board::new(&refined, &active_idxs, &q, &tree);
-            recording.log("quad", &rerun::LineStrips2D::new([points]))?;
+            let board = Board::new(&refined, &active_idxs, &q, 0.3, &tree);
+            let mut pts = Vec::new();
+            let mut colors = Vec::new();
+            board.all_tag_indexes().iter().for_each(|q| {
+                for i in q {
+                    pts.push(refined[*i].p);
+                }
+                colors.push((255, 0, 0, 255));
+                colors.push((255, 255, 0, 255));
+                colors.push((255, 0, 255, 255));
+                colors.push((0, 255, 255, 255));
+            });
+            recording
+                .log(
+                    "/cam0/image/board",
+                    &rerun::Points2D::new(rerun_shift(&pts)).with_colors(colors),
+                )
+                .unwrap();
+            recording.log(
+                "quad",
+                &rerun::LineStrips2D::new([rerun_shift(&points)])
+                    .with_labels([format!("board score {}", board.score)]),
+            )?;
         }
         break;
     }

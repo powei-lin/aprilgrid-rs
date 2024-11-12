@@ -6,10 +6,12 @@ use std::{
 };
 
 use crate::image_util::GrayImagef32;
+use crate::saddle::Saddle;
 use crate::{image_util, math_util, tag_families};
 use faer::solvers::SpSolverLstsq;
 use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
 use itertools::Itertools;
+use kiddo::{KdTree, SquaredEuclidean};
 
 pub struct TagDetector {
     edge: u8,
@@ -207,20 +209,6 @@ fn closest_n_idx(
     });
     let out_len = sorted.len().min(num);
     sorted[0..out_len].iter().map(|(i, _)| *i).collect()
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Saddle {
-    pub p: (f32, f32),
-    pub k: f32,
-    pub theta: f32,
-    pub phi: f32,
-}
-
-impl Saddle {
-    pub fn arr(&self) -> [f32; 2] {
-        [self.p.0, self.p.1]
-    }
 }
 
 pub struct Tag {
@@ -737,5 +725,99 @@ impl TagDetector {
             detected_tags.insert(tag.id, tag.p);
         }
         detected_tags
+    }
+    pub fn detect3(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
+        let mut detected_tags = HashMap::new();
+        let refined = self.refined_saddle_points(&img);
+        let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.try_into().unwrap()).collect();
+        // use the kiddo::KdTree type to get up and running quickly with default settings
+        let tree: KdTree<f32, 2> = (&entries).into();
+
+        // quad search
+        let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
+        let mut count = 0;
+
+        while active_idxs.len() > 4 {
+            let mut tree = tree.clone();
+            let s0_idx = active_idxs.iter().next().unwrap().clone();
+            active_idxs.remove(&s0_idx);
+            // let s0_idx = 80;
+            tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
+            let quads = init_quads(&refined, s0_idx, &tree);
+            for q in quads {
+                let board = crate::board::Board::new(&refined, &active_idxs, &q, 0.3, &tree);
+            }
+            break;
+        }
+        detected_tags
+    }
+}
+
+pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> Vec<[usize; 4]> {
+    let mut out = Vec::new();
+    let s0 = refined[s0_idx];
+    let nearest = tree.nearest_n::<SquaredEuclidean>(&s0.arr(), 50);
+    let mut same_p_idxs = Vec::new();
+    let mut diff_p_idxs = Vec::new();
+    for n in nearest {
+        let s = refined[n.item as usize];
+        let theta_diff = crate::math_util::theta_distance(s0.theta, s.theta);
+        if theta_diff < 3.0 {
+            same_p_idxs.push(n.item as usize);
+        } else if theta_diff > 80.0 {
+            diff_p_idxs.push(n.item as usize);
+        }
+    }
+    for s1_idx in same_p_idxs {
+        let s1 = refined[s1_idx];
+        for dp in diff_p_idxs.iter().combinations(2) {
+            let d0 = refined[*dp[0]];
+            let d1 = refined[*dp[1]];
+            if !crate::saddle::is_valid_quad(&s0, &d0, &s1, &d1) {
+                continue;
+            }
+            let v01 = (d0.p.0 - s0.p.0, d0.p.1 - s0.p.1);
+            let v02 = (s1.p.0 - s0.p.0, s1.p.1 - s0.p.1);
+            let c0 = crate::math_util::cross(&v01, &v02);
+            let quad_idxs = if c0 > 0.0 {
+                [s0_idx, *dp[0], s1_idx, *dp[1]]
+            } else {
+                [s0_idx, *dp[1], s1_idx, *dp[0]]
+            };
+            out.push(quad_idxs);
+        }
+    }
+    out
+}
+
+pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
+    let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.try_into().unwrap()).collect();
+    // use the kiddo::KdTree type to get up and running quickly with default settings
+    let mut tree: KdTree<f32, 2> = (&entries).into();
+
+    // quad search
+    let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
+    let (mut best_score, mut best_board_option) = (0, None);
+    let mut count = 0;
+    while active_idxs.len() > 4 && count < 10 {
+        // let mut tree = tree.clone();
+        let s0_idx = active_idxs.iter().next().unwrap().clone();
+        active_idxs.remove(&s0_idx);
+        tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
+        let quads = init_quads(&refined, s0_idx, &tree);
+        for q in quads {
+            let board = crate::board::Board::new(&refined, &active_idxs, &q, 0.3, &tree);
+            if board.score > best_score {
+                best_score = board.score;
+                best_board_option = Some(board);
+            }
+        }
+        count += 1;
+    }
+    if let Some(best_board) = best_board_option {
+        let tag_idxs: Vec<[usize; 4]> = best_board.all_tag_indexes();
+        Some(tag_idxs)
+    } else {
+        None
     }
 }
