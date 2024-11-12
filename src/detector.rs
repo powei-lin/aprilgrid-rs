@@ -170,19 +170,10 @@ fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u
     clusters
 }
 
-fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
+pub fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
     let x = s0.p.0 - s1.p.0;
     let y = s0.p.1 - s1.p.1;
     x * x + y * y
-}
-fn theta_distance(t0: f32, t1: f32) -> f32 {
-    let mut d = t0 - t1 + PI / 2.0;
-    if d < 0.0 {
-        d += PI;
-    } else if d > PI {
-        d -= PI;
-    }
-    (d - PI / 2.0).abs()
 }
 
 fn closest_n_idx(
@@ -199,9 +190,10 @@ fn closest_n_idx(
         .enumerate()
         .filter_map(|(i, s)| {
             if active_idxs.contains(&i) {
-                if same_polarity && theta_distance(s.theta, target.theta) < 5.0 {
+                if same_polarity && math_util::theta_distance(s.theta, target.theta) < 5.0 {
                     return Some((i, s.clone()));
-                } else if !same_polarity && theta_distance(s.theta, target.theta) > 80.0 {
+                } else if !same_polarity && math_util::theta_distance(s.theta, target.theta) > 80.0
+                {
                     return Some((i, s.clone()));
                 }
             }
@@ -217,19 +209,18 @@ fn closest_n_idx(
     sorted[0..out_len].iter().map(|(i, _)| *i).collect()
 }
 
-fn cross(v0: &(f32, f32), v1: &(f32, f32)) -> f32 {
-    v0.0 * v1.1 - v0.1 * v1.0
-}
-fn dot(v0: &(f32, f32), v1: &(f32, f32)) -> f32 {
-    v0.0 * v1.0 + v0.1 * v1.1
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct Saddle {
     pub p: (f32, f32),
     pub k: f32,
     pub theta: f32,
     pub phi: f32,
+}
+
+impl Saddle {
+    pub fn arr(&self) -> [f32; 2] {
+        [self.p.0, self.p.1]
+    }
 }
 
 pub struct Tag {
@@ -377,10 +368,10 @@ pub fn is_posible_quad(
     side_saddle0: &Saddle,
     side_saddle1: &Saddle,
 ) -> bool {
-    if theta_distance(current_saddle.theta, cross_saddle.theta) > 10.0 {
+    if math_util::theta_distance(current_saddle.theta, cross_saddle.theta) > 10.0 {
         return false;
     }
-    if theta_distance(side_saddle0.theta, side_saddle1.theta) > 10.0 {
+    if math_util::theta_distance(side_saddle0.theta, side_saddle1.theta) > 10.0 {
         return false;
     }
 
@@ -415,12 +406,12 @@ pub fn is_posible_quad(
         cross_saddle.p.0 - current_saddle.p.0,
         cross_saddle.p.1 - current_saddle.p.1,
     );
-    let c0 = cross(&v0, &v2);
-    let c1 = cross(&v2, &v1);
+    let c0 = math_util::cross(&v0, &v2);
+    let c1 = math_util::cross(&v2, &v1);
     if c0 * c1 < 0.0 {
         return false;
     }
-    if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+    if math_util::dot(&v0, &v2) < 0.0 || math_util::dot(&v1, &v2) < 0.0 {
         return false;
     }
     true
@@ -551,12 +542,12 @@ impl TagDetector {
                         cross_saddle.p.0 - current_saddle.p.0,
                         cross_saddle.p.1 - current_saddle.p.1,
                     );
-                    let c0 = cross(&v0, &v2);
-                    let c1 = cross(&v2, &v1);
+                    let c0 = math_util::cross(&v0, &v2);
+                    let c1 = math_util::cross(&v2, &v1);
                     if c0 * c1 < 0.0 {
                         continue;
                     }
-                    if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+                    if math_util::dot(&v0, &v2) < 0.0 || math_util::dot(&v1, &v2) < 0.0 {
                         continue;
                     }
 
@@ -688,12 +679,12 @@ impl TagDetector {
                         cross_saddle.p.0 - current_saddle.p.0,
                         cross_saddle.p.1 - current_saddle.p.1,
                     );
-                    let c0 = cross(&v0, &v2);
-                    let c1 = cross(&v2, &v1);
+                    let c0 = math_util::cross(&v0, &v2);
+                    let c1 = math_util::cross(&v2, &v1);
                     if c0 * c1 < 0.0 {
                         continue;
                     }
-                    if dot(&v0, &v2) < 0.0 || dot(&v1, &v2) < 0.0 {
+                    if math_util::dot(&v0, &v2) < 0.0 || math_util::dot(&v1, &v2) < 0.0 {
                         continue;
                     }
 

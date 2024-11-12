@@ -17,6 +17,7 @@ faer = "0.19.4"
 image = "0.25.4"
 imageproc = "0.25.0"
 itertools = "0.13.0"
+kiddo = "4.2.1"
 
 [dev-dependencies]
 clap = { version = "4.5.20", features = ["derive"] }
