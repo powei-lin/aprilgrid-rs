@@ -13,6 +13,7 @@ use rerun::RecordingStream;
 use std::{
     collections::{HashMap, HashSet},
     io::Cursor,
+    usize,
 };
 
 use clap::Parser;
@@ -100,21 +101,43 @@ fn is_valid_quad(s0: &Saddle, d0: &Saddle, s1: &Saddle, d1: &Saddle) -> bool {
     true
 }
 
-#[derive(Hash)]
+#[derive(Hash, PartialEq, Eq)]
 struct BoardIdx {
     x: i32,
     y: i32,
 }
+impl BoardIdx {
+    pub fn new(x: i32, y: i32) -> BoardIdx {
+        BoardIdx { x, y }
+    }
+}
 
-struct Board {
+struct Board<'a> {
+    refined: &'a [Saddle],
     active_idxs: HashSet<usize>,
     found_board_idxs: HashMap<BoardIdx, Option<[usize; 4]>>,
+    tree: KdTree<f32, 2>,
+    score: u32,
 }
-impl Board {
-    pub fn new() -> Board {
+impl<'a> Board<'a> {
+    pub fn new(
+        refined: &'a [Saddle],
+        active_idxs: &HashSet<usize>,
+        quad_idxs: &[usize; 4],
+        tree: &KdTree<f32, 2>,
+    ) -> Board<'a> {
+        let mut active_idxs = active_idxs.clone();
+        let mut tree = tree.clone();
+        for i in &quad_idxs[1..] {
+            active_idxs.remove(i);
+            tree.remove(&refined[*i].arr(), *i as u64);
+        }
         Board {
-            active_idxs: HashSet::new(),
-            found_board_idxs: HashMap::new(),
+            refined,
+            active_idxs,
+            found_board_idxs: HashMap::from([(BoardIdx::new(0, 0), Some(quad_idxs.clone()))]),
+            tree,
+            score: 1,
         }
     }
 }
@@ -177,7 +200,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
     let mut count = 0;
 
-    let mut board = Board::new();
     while active_idxs.len() > 4 {
         let mut tree = tree.clone();
         let s0_idx = active_idxs.iter().next().unwrap().clone();
@@ -191,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 refined[q[3]].arr(),
                 refined[q[0]].arr(),
             ];
+            let board = Board::new(&refined, &active_idxs, &q, &tree);
             recording.log("quad", &rerun::LineStrips2D::new([points]))?;
         }
         break;
