@@ -172,46 +172,6 @@ fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u
     clusters
 }
 
-pub fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
-    let x = s0.p.0 - s1.p.0;
-    let y = s0.p.1 - s1.p.1;
-    x * x + y * y
-}
-
-fn closest_n_idx(
-    saddles: &[Saddle],
-    self_idx: usize,
-    active_idxs: &HashSet<usize>,
-    num: usize,
-    same_polarity: bool,
-) -> Vec<usize> {
-    let target = saddles[self_idx];
-    // let polarity = (target.theta - target.theta2).abs() < 1.0;
-    let mut sorted: Vec<_> = saddles
-        .iter()
-        .enumerate()
-        .filter_map(|(i, s)| {
-            if active_idxs.contains(&i) {
-                if same_polarity && math_util::theta_distance_degree(s.theta, target.theta) < 5.0 {
-                    return Some((i, s.clone()));
-                } else if !same_polarity
-                    && math_util::theta_distance_degree(s.theta, target.theta) > 80.0
-                {
-                    return Some((i, s.clone()));
-                }
-            }
-            None
-        })
-        .collect();
-    sorted.sort_by(|(_, a), (_, b)| {
-        saddle_distance2(&target, a)
-            .partial_cmp(&saddle_distance2(&target, b))
-            .unwrap()
-    });
-    let out_len = sorted.len().min(num);
-    sorted[0..out_len].iter().map(|(i, _)| *i).collect()
-}
-
 pub struct Tag {
     pub id: u32,
     pub p: [(f32, f32); 4],
@@ -351,60 +311,7 @@ where
     }
     refined_corners
 }
-pub fn is_posible_quad(
-    current_saddle: &Saddle,
-    cross_saddle: &Saddle,
-    side_saddle0: &Saddle,
-    side_saddle1: &Saddle,
-) -> bool {
-    if math_util::theta_distance_degree(current_saddle.theta, cross_saddle.theta) > 10.0 {
-        return false;
-    }
-    if math_util::theta_distance_degree(side_saddle0.theta, side_saddle1.theta) > 10.0 {
-        return false;
-    }
 
-    let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
-    let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
-    let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
-    let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
-    let avg_l = (l0 + l1 + l2 + l3) / 4.0;
-    let l_ratio = 0.3;
-    let min_l = avg_l * (1.0 - l_ratio);
-    let max_l = avg_l * (1.0 + l_ratio);
-    if l0 < min_l
-        || l0 > max_l
-        || l1 < min_l
-        || l1 > max_l
-        || l2 < min_l
-        || l2 > max_l
-        || l3 < min_l
-        || l3 > max_l
-    {
-        return false;
-    }
-    let v0 = (
-        side_saddle0.p.0 - current_saddle.p.0,
-        side_saddle0.p.1 - current_saddle.p.1,
-    );
-    let v1 = (
-        side_saddle1.p.0 - current_saddle.p.0,
-        side_saddle1.p.1 - current_saddle.p.1,
-    );
-    let v2 = (
-        cross_saddle.p.0 - current_saddle.p.0,
-        cross_saddle.p.1 - current_saddle.p.1,
-    );
-    let c0 = math_util::cross(&v0, &v2);
-    let c1 = math_util::cross(&v2, &v1);
-    if c0 * c1 < 0.0 {
-        return false;
-    }
-    if math_util::dot(&v0, &v2) < 0.0 || math_util::dot(&v1, &v2) < 0.0 {
-        return false;
-    }
-    true
-}
 impl TagDetector {
     pub fn new(
         tag_family: &tag_families::TagFamily,
@@ -486,93 +393,6 @@ impl TagDetector {
         refined
     }
 
-    fn find_one_target(
-        &self,
-        refined: &[Saddle],
-        img_grey: &GrayImage,
-    ) -> Option<(Tag, HashSet<usize>)> {
-        let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
-
-        let mut start_idx = active_idxs.iter().next().unwrap().clone();
-        while active_idxs.len() >= 4 {
-            if !active_idxs.remove(&start_idx) {
-                start_idx = active_idxs.iter().next().unwrap().clone();
-                continue;
-            }
-            let current_saddle = refined[start_idx];
-            let closest_idxs_same = closest_n_idx(&refined, start_idx, &active_idxs, 15, true);
-            let closest_idxs_diff = closest_n_idx(&refined, start_idx, &active_idxs, 30, false);
-            for idx_i in &closest_idxs_same {
-                for jk in closest_idxs_diff.iter().combinations(2) {
-                    let idx_i = *idx_i;
-                    let idx_j = *jk[0];
-                    let idx_k = *jk[1];
-                    let cross_saddle = refined[idx_i];
-                    let side_saddle0 = refined[idx_j];
-                    let side_saddle1 = refined[idx_k];
-                    if !is_posible_quad(
-                        &current_saddle,
-                        &cross_saddle,
-                        &side_saddle0,
-                        &side_saddle1,
-                    ) {
-                        continue;
-                    }
-
-                    let v0 = (
-                        side_saddle0.p.0 - current_saddle.p.0,
-                        side_saddle0.p.1 - current_saddle.p.1,
-                    );
-                    let v1 = (
-                        side_saddle1.p.0 - current_saddle.p.0,
-                        side_saddle1.p.1 - current_saddle.p.1,
-                    );
-                    let v2 = (
-                        cross_saddle.p.0 - current_saddle.p.0,
-                        cross_saddle.p.1 - current_saddle.p.1,
-                    );
-                    let c0 = math_util::cross(&v0, &v2);
-                    let c1 = math_util::cross(&v2, &v1);
-                    if c0 * c1 < 0.0 {
-                        continue;
-                    }
-                    if math_util::dot(&v0, &v2) < 0.0 || math_util::dot(&v1, &v2) < 0.0 {
-                        continue;
-                    }
-
-                    let quad_points = if c0 > 0.0 {
-                        vec![
-                            current_saddle.p,
-                            refined[idx_j].p,
-                            refined[idx_i].p,
-                            refined[idx_k].p,
-                        ]
-                    } else {
-                        vec![
-                            current_saddle.p,
-                            refined[idx_k].p,
-                            refined[idx_i].p,
-                            refined[idx_j].p,
-                        ]
-                    };
-                    if let Some((tag_id, refined_arr)) =
-                        self.try_decode_quad(&img_grey, &quad_points)
-                    {
-                        active_idxs.remove(&idx_i);
-                        active_idxs.remove(&idx_j);
-                        active_idxs.remove(&idx_k);
-                        let tag = Tag {
-                            id: tag_id as u32,
-                            p: refined_arr,
-                        };
-                        return Some((tag, active_idxs));
-                    }
-                }
-            }
-        }
-        None
-    }
-
     fn try_decode_quad(
         &self,
         img_grey: &GrayImage,
@@ -603,131 +423,7 @@ impl TagDetector {
         None
     }
 
-    // TODO too slow
     pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
-        let mut detected_tags = HashMap::new();
-        let mut avg_tag_l = Vec::new();
-        let img_grey = img.to_luma8();
-        let refined = self.refined_saddle_points(&img);
-        if refined.len() < 4 {
-            return detected_tags;
-        }
-        let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
-
-        let mut start_idx = refined.len() / 2;
-        while active_idxs.len() >= 4 {
-            if !active_idxs.remove(&start_idx) {
-                start_idx = active_idxs.iter().next().unwrap().clone();
-                continue;
-            }
-            let current_saddle = refined[start_idx];
-            // println!("start idx: {} {} {}", start_idx, refined[start_idx].p.0, refined[start_idx].p.1);
-            let closest_idxs_same = closest_n_idx(&refined, start_idx, &active_idxs, 15, true);
-            let closest_idxs_diff = closest_n_idx(&refined, start_idx, &active_idxs, 30, false);
-            let mut found = false;
-            for idx_i in &closest_idxs_same {
-                if found {
-                    break;
-                }
-                for jk in closest_idxs_diff.iter().combinations(2) {
-                    let idx_i = *idx_i;
-                    let idx_j = *jk[0];
-                    let idx_k = *jk[1];
-                    let cross_saddle = refined[idx_i];
-                    let side_saddle0 = refined[idx_j];
-                    let side_saddle1 = refined[idx_k];
-                    if !is_posible_quad(
-                        &current_saddle,
-                        &cross_saddle,
-                        &side_saddle0,
-                        &side_saddle1,
-                    ) {
-                        continue;
-                    }
-
-                    let l0 = saddle_distance2(&current_saddle, &side_saddle0).sqrt();
-                    let l1 = saddle_distance2(&current_saddle, &side_saddle1).sqrt();
-                    let l2 = saddle_distance2(&cross_saddle, &side_saddle0).sqrt();
-                    let l3 = saddle_distance2(&cross_saddle, &side_saddle1).sqrt();
-                    let avg_l = (l0 + l1 + l2 + l3) / 4.0;
-                    if avg_tag_l.len() > 4 {
-                        let global_avg_l = avg_tag_l.iter().sum::<f32>() / avg_tag_l.len() as f32;
-                        if avg_l < global_avg_l * 0.7 || avg_l > global_avg_l * 1.3 {
-                            continue;
-                        }
-                    }
-                    let v0 = (
-                        side_saddle0.p.0 - current_saddle.p.0,
-                        side_saddle0.p.1 - current_saddle.p.1,
-                    );
-                    let v1 = (
-                        side_saddle1.p.0 - current_saddle.p.0,
-                        side_saddle1.p.1 - current_saddle.p.1,
-                    );
-                    let v2 = (
-                        cross_saddle.p.0 - current_saddle.p.0,
-                        cross_saddle.p.1 - current_saddle.p.1,
-                    );
-                    let c0 = math_util::cross(&v0, &v2);
-                    let c1 = math_util::cross(&v2, &v1);
-                    if c0 * c1 < 0.0 {
-                        continue;
-                    }
-                    if math_util::dot(&v0, &v2) < 0.0 || math_util::dot(&v1, &v2) < 0.0 {
-                        continue;
-                    }
-
-                    let quad_points = if c0 > 0.0 {
-                        vec![
-                            current_saddle.p,
-                            refined[idx_j].p,
-                            refined[idx_i].p,
-                            refined[idx_k].p,
-                        ]
-                    } else {
-                        vec![
-                            current_saddle.p,
-                            refined[idx_k].p,
-                            refined[idx_i].p,
-                            refined[idx_j].p,
-                        ]
-                    };
-                    if let Some((tag_id, refined_arr)) =
-                        self.try_decode_quad(&img_grey, &quad_points)
-                    {
-                        active_idxs.remove(&idx_i);
-                        active_idxs.remove(&idx_j);
-                        active_idxs.remove(&idx_k);
-                        for next_idx in &closest_idxs_same {
-                            if active_idxs.contains(next_idx) {
-                                start_idx = *next_idx;
-                                break;
-                            }
-                        }
-                        avg_tag_l.push(avg_l);
-                        detected_tags.insert(tag_id as u32, refined_arr);
-                        found = true;
-                        break;
-                    }
-                }
-            }
-        }
-        detected_tags
-    }
-
-    pub fn detect2(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
-        let mut detected_tags = HashMap::new();
-        let img_grey = img.to_luma8();
-        let refined = self.refined_saddle_points(&img);
-        if refined.len() < 4 {
-            return detected_tags;
-        }
-        if let Some((tag, _)) = self.find_one_target(&refined, &img_grey) {
-            detected_tags.insert(tag.id, tag.p);
-        }
-        detected_tags
-    }
-    pub fn detect3(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
         let img_grey = img.to_luma8();
         let refined = self.refined_saddle_points(&img);
@@ -737,10 +433,6 @@ impl TagDetector {
                 let quad_points: Vec<(f32, f32)> =
                     quad_indexes.iter().map(|i| refined[*i].p).collect();
                 if let Some((tag_id, refined_arr)) = self.try_decode_quad(&img_grey, &quad_points) {
-                    // let tag = Tag {
-                    //     id: tag_id as u32,
-                    //     p: refined_arr,
-                    // };
                     detected_tags.insert(tag_id as u32, refined_arr);
                 }
             }

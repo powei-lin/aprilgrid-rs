@@ -14,7 +14,7 @@ mod tests {
                     .unwrap()
                     .decode()
                     .unwrap();
-                let tags = detector.detect3(&img);
+                let tags = detector.detect(&img);
                 println!("{}", tags.len());
                 assert!(tags.len() >= expected);
             }

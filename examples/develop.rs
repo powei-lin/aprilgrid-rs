@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while active_idxs.len() > 4 {
         let mut tree = tree.clone();
         let s0_idx = active_idxs.iter().next().unwrap().clone();
-        // println!("s0 {}", s0_idx);
+        println!("s0 {}", s0_idx);
         // let s0_idx = 358;
         active_idxs.remove(&s0_idx);
         tree.remove(&refined[s0_idx].arr(), s0_idx as u64);

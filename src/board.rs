@@ -66,7 +66,9 @@ impl<'a> Board<'a> {
                     }
                 };
                 if self.found_board_idxs.contains_key(&new_board_idx) {
-                    continue;
+                    if self.found_board_idxs.get(&new_board_idx).unwrap().is_some() {
+                        continue;
+                    }
                 }
 
                 if let Some(valid_new_qs) = self.try_expand_one(&qs.try_into().unwrap()) {

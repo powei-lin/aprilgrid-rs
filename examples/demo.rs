@@ -39,9 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
     let dataset_root = "data";
-    // let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
-    let dataset_root =
-        "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
+    let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
+    // let dataset_root =
+    //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
     // let dataset_root = "tests/data";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
     // let mut time_sec = 0.0;
@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recording.set_time_nanos("stable_time", time_ns);
         // recording.set_time_seconds("stable_time", time_sec);
         // time_sec += one_frame_time;
-        let tags = detector.detect3(&img0);
+        let tags = detector.detect(&img0);
         for (t_id, corners) in tags {
             let mut c: Vec<(f32, f32)> = corners.into();
             if let Some(mut homography_points) =

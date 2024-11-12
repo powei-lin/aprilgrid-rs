@@ -65,3 +65,9 @@ pub fn is_valid_quad(s0: &Saddle, d0: &Saddle, s1: &Saddle, d1: &Saddle) -> bool
     }
     true
 }
+
+pub fn saddle_distance2(s0: &Saddle, s1: &Saddle) -> f32 {
+    let x = s0.p.0 - s1.p.0;
+    let y = s0.p.1 - s1.p.1;
+    x * x + y * y
+}
