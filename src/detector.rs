@@ -164,7 +164,7 @@ fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u
         for c in 1..h_mat.width() - 1 {
             let mut cluster = Vec::new();
             image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
-            if cluster.len() > 0 {
+            if !cluster.is_empty() {
                 clusters.push(cluster);
             }
         }
@@ -407,7 +407,7 @@ impl TagDetector {
             0.5,
         );
         if let Some(homo_points) = homo_points_option {
-            let bits_option = bit_code(&img_grey, &homo_points, 10, 3);
+            let bits_option = bit_code(img_grey, &homo_points, 10, 3);
             if let Some(bits) = bits_option {
                 let tag_id_option =
                     best_tag(bits, self.hamming_distance, &self.code_list, self.edge);
@@ -426,7 +426,7 @@ impl TagDetector {
     pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
         let img_grey = img.to_luma8();
-        let refined = self.refined_saddle_points(&img);
+        let refined = self.refined_saddle_points(img);
         let best_board_indexes_option = try_find_best_board(&refined);
         if let Some(best_board_indexes) = best_board_indexes_option {
             for quad_indexes in best_board_indexes {
@@ -482,22 +482,22 @@ pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> V
 }
 
 pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
-    let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.try_into().unwrap()).collect();
+    let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.into()).collect();
     // use the kiddo::KdTree type to get up and running quickly with default settings
     let mut tree: KdTree<f32, 2> = (&entries).into();
 
     // quad search
-    let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
+    let mut active_idxs: HashSet<usize> = (0..refined.len()).collect();
     let (mut best_score, mut best_board_option) = (0, None);
     let mut count = 0;
     while active_idxs.len() > 4 && count < 30 {
         // let mut tree = tree.clone();
-        let s0_idx = active_idxs.iter().next().unwrap().clone();
+        let s0_idx = *active_idxs.iter().next().unwrap();
         active_idxs.remove(&s0_idx);
         tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
-        let quads = init_quads(&refined, s0_idx, &tree);
+        let quads = init_quads(refined, s0_idx, &tree);
         for q in quads {
-            let board = crate::board::Board::new(&refined, &active_idxs, &q, 0.3, &tree);
+            let board = crate::board::Board::new(refined, &active_idxs, &q, 0.3, &tree);
             if board.score > best_score {
                 best_score = board.score;
                 best_board_option = Some(board);
@@ -505,7 +505,7 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
         }
         // TODO review this
         if best_score > 5 {
-            active_idxs.insert(s0_idx.clone());
+            active_idxs.insert(s0_idx);
             tree.add(&refined[s0_idx].arr(), s0_idx as u64);
         }
         if best_score >= 36 {

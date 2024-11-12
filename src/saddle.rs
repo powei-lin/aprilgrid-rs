@@ -28,7 +28,7 @@ pub fn is_valid_quad(s0: &Saddle, d0: &Saddle, s1: &Saddle, d1: &Saddle) -> bool
     let v_theta = (s0_theta.cos(), s0_theta.sin());
     let angle = crate::math_util::angle_degree(&v02, &v_theta).abs();
 
-    if angle < 60.0 || angle > 120.0 {
+    if !(60.0..=120.0).contains(&angle) {
         // println!("v02x {}", v02x);
         // println!("v02 {:?}", v02);
         // println!("x0 {:?}", x0);

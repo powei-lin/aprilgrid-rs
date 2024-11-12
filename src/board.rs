@@ -39,7 +39,7 @@ impl<'a> Board<'a> {
         let mut b = Board {
             refined,
             active_idxs,
-            found_board_idxs: HashMap::from([(BoardIdx::new(0, 0), Some(quad_idxs.clone()))]),
+            found_board_idxs: HashMap::from([(BoardIdx::new(0, 0), Some(*quad_idxs))]),
             tree,
             spacing_ratio,
             score: 1,
@@ -65,10 +65,10 @@ impl<'a> Board<'a> {
                         panic!("should not reach");
                     }
                 };
-                if self.found_board_idxs.contains_key(&new_board_idx) {
-                    if self.found_board_idxs.get(&new_board_idx).unwrap().is_some() {
-                        continue;
-                    }
+
+                // TODO need review
+                if self.found_board_idxs.contains_key(&new_board_idx) && self.found_board_idxs.get(&new_board_idx).unwrap().is_some() {
+                    continue;
                 }
 
                 if let Some(valid_new_qs) = self.try_expand_one(&qs.try_into().unwrap()) {
@@ -79,10 +79,10 @@ impl<'a> Board<'a> {
                     }
                     self.score += 1;
                     self.found_board_idxs
-                        .insert(new_board_idx.clone(), Some(v.try_into().unwrap()));
+                        .insert(new_board_idx, Some(v.try_into().unwrap()));
                     self.try_expand(&new_board_idx);
                 } else {
-                    let a = self.found_board_idxs.insert(new_board_idx, None);
+                    self.found_board_idxs.insert(new_board_idx, None);
                 }
             }
         }
