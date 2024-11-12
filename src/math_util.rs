@@ -11,15 +11,15 @@ pub fn find_xy(a0: f32, b0: f32, c0: f32, a1: f32, b1: f32, c1: f32) -> (f32, f3
     unsafe { (*x1.get_unchecked(0, 0), *x1.get_unchecked(1, 0)) }
 }
 
-/// Abs theta diff [0, pi/2]
-pub fn theta_distance(t0: f32, t1: f32) -> f32 {
-    let mut d = t0 - t1 + PI / 2.0;
+/// Abs theta diff [0, 90.0]
+pub fn theta_distance_degree(t0: f32, t1: f32) -> f32 {
+    let mut d = t0 - t1 + 90.0;
     if d < 0.0 {
-        d += PI;
-    } else if d > PI {
-        d -= PI;
+        d += 180.0;
+    } else if d > 180.0 {
+        d -= 180.0;
     }
-    (d - PI / 2.0).abs()
+    (d - 90.0).abs()
 }
 pub fn cross(v0: &(f32, f32), v1: &(f32, f32)) -> f32 {
     v0.0 * v1.1 - v0.1 * v1.0

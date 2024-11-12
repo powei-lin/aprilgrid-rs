@@ -192,9 +192,10 @@ fn closest_n_idx(
         .enumerate()
         .filter_map(|(i, s)| {
             if active_idxs.contains(&i) {
-                if same_polarity && math_util::theta_distance(s.theta, target.theta) < 5.0 {
+                if same_polarity && math_util::theta_distance_degree(s.theta, target.theta) < 5.0 {
                     return Some((i, s.clone()));
-                } else if !same_polarity && math_util::theta_distance(s.theta, target.theta) > 80.0
+                } else if !same_polarity
+                    && math_util::theta_distance_degree(s.theta, target.theta) > 80.0
                 {
                     return Some((i, s.clone()));
                 }
@@ -356,10 +357,10 @@ pub fn is_posible_quad(
     side_saddle0: &Saddle,
     side_saddle1: &Saddle,
 ) -> bool {
-    if math_util::theta_distance(current_saddle.theta, cross_saddle.theta) > 10.0 {
+    if math_util::theta_distance_degree(current_saddle.theta, cross_saddle.theta) > 10.0 {
         return false;
     }
-    if math_util::theta_distance(side_saddle0.theta, side_saddle1.theta) > 10.0 {
+    if math_util::theta_distance_degree(side_saddle0.theta, side_saddle1.theta) > 10.0 {
         return false;
     }
 
@@ -728,26 +729,21 @@ impl TagDetector {
     }
     pub fn detect3(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
+        let img_grey = img.to_luma8();
         let refined = self.refined_saddle_points(&img);
-        let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.try_into().unwrap()).collect();
-        // use the kiddo::KdTree type to get up and running quickly with default settings
-        let tree: KdTree<f32, 2> = (&entries).into();
-
-        // quad search
-        let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
-        let mut count = 0;
-
-        while active_idxs.len() > 4 {
-            let mut tree = tree.clone();
-            let s0_idx = active_idxs.iter().next().unwrap().clone();
-            active_idxs.remove(&s0_idx);
-            // let s0_idx = 80;
-            tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
-            let quads = init_quads(&refined, s0_idx, &tree);
-            for q in quads {
-                let board = crate::board::Board::new(&refined, &active_idxs, &q, 0.3, &tree);
+        let best_board_indexes_option = try_find_best_board(&refined);
+        if let Some(best_board_indexes) = best_board_indexes_option {
+            for quad_indexes in best_board_indexes {
+                let quad_points: Vec<(f32, f32)> =
+                    quad_indexes.iter().map(|i| refined[*i].p).collect();
+                if let Some((tag_id, refined_arr)) = self.try_decode_quad(&img_grey, &quad_points) {
+                    // let tag = Tag {
+                    //     id: tag_id as u32,
+                    //     p: refined_arr,
+                    // };
+                    detected_tags.insert(tag_id as u32, refined_arr);
+                }
             }
-            break;
         }
         detected_tags
     }
@@ -761,7 +757,7 @@ pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> V
     let mut diff_p_idxs = Vec::new();
     for n in nearest {
         let s = refined[n.item as usize];
-        let theta_diff = crate::math_util::theta_distance(s0.theta, s.theta);
+        let theta_diff = crate::math_util::theta_distance_degree(s0.theta, s.theta);
         if theta_diff < 3.0 {
             same_p_idxs.push(n.item as usize);
         } else if theta_diff > 80.0 {
@@ -774,6 +770,9 @@ pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> V
             let d0 = refined[*dp[0]];
             let d1 = refined[*dp[1]];
             if !crate::saddle::is_valid_quad(&s0, &d0, &s1, &d1) {
+                // if s1_idx == 30 && *dp[1] == 28 && *dp[0] == 60{
+                //     panic!("aaaa");
+                // }
                 continue;
             }
             let v01 = (d0.p.0 - s0.p.0, d0.p.1 - s0.p.1);
@@ -799,7 +798,7 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
     let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
     let (mut best_score, mut best_board_option) = (0, None);
     let mut count = 0;
-    while active_idxs.len() > 4 && count < 10 {
+    while active_idxs.len() > 4 && count < 30 {
         // let mut tree = tree.clone();
         let s0_idx = active_idxs.iter().next().unwrap().clone();
         active_idxs.remove(&s0_idx);
@@ -811,6 +810,14 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
                 best_score = board.score;
                 best_board_option = Some(board);
             }
+        }
+        // TODO review this
+        if best_score > 5 {
+            active_idxs.insert(s0_idx.clone());
+            tree.add(&refined[s0_idx].arr(), s0_idx as u64);
+        }
+        if best_score >= 36 {
+            break;
         }
         count += 1;
     }

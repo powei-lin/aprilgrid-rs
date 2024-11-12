@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recording.set_time_nanos("stable_time", time_ns);
         // recording.set_time_seconds("stable_time", time_sec);
         // time_sec += one_frame_time;
-        let tags = detector.detect2(&img0);
+        let tags = detector.detect3(&img0);
         for (t_id, corners) in tags {
             let mut c: Vec<(f32, f32)> = corners.into();
             if let Some(mut homography_points) =

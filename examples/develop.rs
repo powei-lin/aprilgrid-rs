@@ -1,5 +1,5 @@
 use aprilgrid::board::Board;
-use aprilgrid::detector::{best_tag, bit_code, decode_positions};
+use aprilgrid::detector::{best_tag, bit_code, decode_positions, try_find_best_board};
 use aprilgrid::saddle::{is_valid_quad, Saddle};
 use core::f32;
 use glam::{Vec2, Vec2Swizzles};
@@ -13,6 +13,7 @@ use kiddo::{KdTree, SquaredEuclidean};
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use rerun::RecordingStream;
+use std::fmt::format;
 use std::{
     collections::{HashMap, HashSet},
     f32::consts::PI,
@@ -84,6 +85,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let img_grey = img.to_luma8();
 
     log_image_as_compressed(&recording, "/cam0", &img);
+    // let best_board = try_find_best_board(&refined);
+    // if let Some(board) = best_board {
+    //     let mut pts = Vec::new();
+    //     let mut colors = Vec::new();
+    //     board.iter().for_each(|q| {
+    //         for i in q {
+    //             pts.push(refined[*i].p);
+    //         }
+    //         colors.push((255, 0, 0, 255));
+    //         colors.push((255, 255, 0, 255));
+    //         colors.push((255, 0, 255, 255));
+    //         colors.push((0, 255, 255, 255));
+    //     });
+    //     recording
+    //         .log(
+    //             "/cam0/image/board",
+    //             &rerun::Points2D::new(rerun_shift(&pts))
+    //                 .with_colors(colors)
+    //                 .with_labels([format!("{}", board.len())]),
+    //         )
+    //         .unwrap();
+    // }
 
     let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.try_into().unwrap()).collect();
     // use the kiddo::KdTree type to get up and running quickly with default settings
@@ -96,8 +119,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while active_idxs.len() > 4 {
         let mut tree = tree.clone();
         let s0_idx = active_idxs.iter().next().unwrap().clone();
+        // println!("s0 {}", s0_idx);
+        // let s0_idx = 358;
         active_idxs.remove(&s0_idx);
-        // let s0_idx = 80;
         tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
         let quads = aprilgrid::detector::init_quads(&refined, s0_idx, &tree);
         for q in quads {
