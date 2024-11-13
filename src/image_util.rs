@@ -1,4 +1,4 @@
-use faer;
+use faer::{self, solvers::SpSolverLstsq};
 use image::{GenericImage, GenericImageView};
 pub type GrayImagef32 = image::ImageBuffer<image::Luma<f32>, Vec<f32>>;
 
@@ -34,6 +34,37 @@ pub fn tag_homography(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> fae
     // println!("faer v {:?}", svd.v());
     let h = svd.v().col(8);
     faer::mat![[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], h[8]],]
+}
+
+pub fn tag_affine(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::Mat<f32> {
+    let source = [
+        (-margin, -margin),
+        (-margin, side_bits as f32 - 1.0 + margin),
+        (
+            side_bits as f32 - 1.0 + margin,
+            side_bits as f32 - 1.0 + margin,
+        ),
+        (side_bits as f32 - 1.0 + margin, -margin),
+    ];
+
+    let mut mat_a: faer::Mat<f32> = faer::Mat::zeros(8, 6);
+    let mut mat_b: faer::Mat<f32> = faer::Mat::zeros(8, 1);
+
+    for p in 0..4 {
+        unsafe {
+            mat_a.write_unchecked(p * 2, 0, source[p].0);
+            mat_a.write_unchecked(p * 2, 1, source[p].1);
+            mat_a.write_unchecked(p * 2, 2, 1.0);
+            mat_a.write_unchecked(p * 2 + 1, 3, source[p].0);
+            mat_a.write_unchecked(p * 2 + 1, 4, source[p].1);
+            mat_a.write_unchecked(p * 2 + 1, 5, 1.0);
+            mat_b.write_unchecked(p * 2, 0, corners[p].0);
+            mat_b.write_unchecked(p * 2 + 1, 0, corners[p].1);
+        }
+    }
+    let params = mat_a.qr().solve_lstsq(mat_b);
+    let h = params.col(0);
+    faer::mat![[h[0], h[1], h[2]], [h[3], h[4], h[5]], [0.0, 0.0, 1.0],]
 }
 
 pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {

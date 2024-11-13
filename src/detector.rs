@@ -53,15 +53,15 @@ pub fn decode_positions(
         return None;
     }
     let side_bits = border_bits * 2 + edge_bits;
-    let h = image_util::tag_homography(quad_pts, side_bits, margin);
+    let affine_mat = image_util::tag_affine(quad_pts, side_bits, margin);
     Some(
         (border_bits..border_bits + edge_bits)
             .flat_map(|x| {
                 (border_bits..border_bits + edge_bits)
                     .map(|y| {
                         let tp = faer::mat![[x as f32], [y as f32], [1.0]];
-                        let tt = h.clone() * tp;
-                        (tt[(0, 0)] / tt[(2, 0)], tt[(1, 0)] / tt[(2, 0)])
+                        let tt = affine_mat.clone() * tp;
+                        (tt[(0, 0)], tt[(1, 0)])
                     })
                     .collect::<Vec<_>>()
             })
