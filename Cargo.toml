@@ -1,6 +1,6 @@
 [package]
 name = "aprilgrid"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 authors = ["Powei Lin <poweilin1994@gmail.com>"]
 readme = "README.md"
@@ -14,9 +14,11 @@ exclude = ["/.github/*", "*.ipynb", "./scripts/*", "examples/*", "tests/*"]
 
 [dependencies]
 faer = "0.19.4"
+glam = "0.29.2"
 image = "0.25.4"
 imageproc = "0.25.0"
 itertools = "0.13.0"
+kiddo = "4.2.1"
 
 [dev-dependencies]
 clap = { version = "4.5.20", features = ["derive"] }
