@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
     let dataset_root = "data";
-    let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
+    // let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
     // let dataset_root =
     //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
     // let dataset_root = "tests/data";
@@ -50,15 +50,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let detector_params = None;
     let detector = aprilgrid::detector::TagDetector::new(&aprilgrid::TagFamily::T36H11, None);
     for path in img_paths {
-        let time_ns: i64 = path
-            .as_ref()
-            .unwrap()
-            .file_stem()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .parse()
-            .unwrap();
+        // let time_ns: i64 = path
+        //     .as_ref()
+        //     .unwrap()
+        //     .file_stem()
+        //     .unwrap()
+        //     .to_str()
+        //     .unwrap()
+        //     .parse()
+        //     .unwrap();
         let img0 = ImageReader::open(path.unwrap())?.decode()?;
 
         let mut corner_colors = Vec::new();
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut tag_colors = Vec::new();
         let mut memo = Vec::new();
 
-        recording.set_time_nanos("stable_time", time_ns);
+        // recording.set_time_nanos("stable_time", time_ns);
         // recording.set_time_seconds("stable_time", time_sec);
         // time_sec += one_frame_time;
         let tags = detector.detect(&img0);
