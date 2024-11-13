@@ -1,4 +1,5 @@
 use core::f32;
+use rand::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     f32::consts::PI,
@@ -52,15 +53,15 @@ pub fn decode_positions(
         return None;
     }
     let side_bits = border_bits * 2 + edge_bits;
-    let h = image_util::tag_homography(quad_pts, side_bits, margin);
+    let affine_mat = image_util::tag_affine(quad_pts, side_bits, margin);
     Some(
         (border_bits..border_bits + edge_bits)
             .flat_map(|x| {
                 (border_bits..border_bits + edge_bits)
                     .map(|y| {
                         let tp = faer::mat![[x as f32], [y as f32], [1.0]];
-                        let tt = h.clone() * tp;
-                        (tt[(0, 0)] / tt[(2, 0)], tt[(1, 0)] / tt[(2, 0)])
+                        let tt = affine_mat.clone() * tp;
+                        (tt[(0, 0)], tt[(1, 0)])
                     })
                     .collect::<Vec<_>>()
             })
@@ -447,10 +448,10 @@ pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> V
     let nearest = tree.nearest_n::<SquaredEuclidean>(&s0.arr(), 50);
     let mut same_p_idxs = Vec::new();
     let mut diff_p_idxs = Vec::new();
-    for n in nearest {
+    for n in &nearest[1..] {
         let s = refined[n.item as usize];
         let theta_diff = crate::math_util::theta_distance_degree(s0.theta, s.theta);
-        if theta_diff < 3.0 {
+        if theta_diff < 5.0 {
             same_p_idxs.push(n.item as usize);
         } else if theta_diff > 80.0 {
             diff_p_idxs.push(n.item as usize);
@@ -490,12 +491,15 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
     let mut active_idxs: HashSet<usize> = (0..refined.len()).collect();
     let (mut best_score, mut best_board_option) = (0, None);
     let mut count = 0;
-    while active_idxs.len() > 4 && count < 30 {
+    let mut rng = rand::thread_rng();
+    let mut s0_idxs: Vec<&usize> = active_idxs.iter().collect();
+    s0_idxs.shuffle(&mut rng);
+    while !s0_idxs.is_empty() && count < 30 {
         // let mut tree = tree.clone();
-        let s0_idx = *active_idxs.iter().next().unwrap();
-        active_idxs.remove(&s0_idx);
-        tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
-        let quads = init_quads(refined, s0_idx, &tree);
+        let s0_idx = s0_idxs.pop().unwrap();
+        // active_idxs.remove(&s0_idx);
+        // tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
+        let quads = init_quads(refined, *s0_idx, &tree);
         for q in quads {
             let board = crate::board::Board::new(refined, &active_idxs, &q, 0.3, &tree);
             if board.score > best_score {
@@ -504,16 +508,17 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
             }
         }
         // TODO review this
-        if best_score > 5 {
-            active_idxs.insert(s0_idx);
-            tree.add(&refined[s0_idx].arr(), s0_idx as u64);
-        }
+        // if best_score > 5 {
+        //     active_idxs.insert(s0_idx);
+        //     tree.add(&refined[s0_idx].arr(), s0_idx as u64);
+        // }
         if best_score >= 36 {
             break;
         }
         count += 1;
     }
-    if let Some(best_board) = best_board_option {
+    if let Some(mut best_board) = best_board_option {
+        best_board.try_fix_missing();
         let tag_idxs: Vec<[usize; 4]> = best_board.all_tag_indexes();
         Some(tag_idxs)
     } else {

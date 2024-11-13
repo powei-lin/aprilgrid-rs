@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
     // let dataset_root =
     //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
-    // let dataset_root = "tests/data";
+    // let dataset_root = "test_data/data3";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
     // let mut time_sec = 0.0;
     // let fps = 60.0;

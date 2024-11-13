@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut tree = tree.clone();
         let s0_idx = active_idxs.iter().next().unwrap().clone();
         println!("s0 {}", s0_idx);
-        // let s0_idx = 358;
+        // let s0_idx: usize = 86;
         active_idxs.remove(&s0_idx);
         tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
         let quads = aprilgrid::detector::init_quads(&refined, s0_idx, &tree);
