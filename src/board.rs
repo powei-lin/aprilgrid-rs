@@ -3,7 +3,7 @@ use glam;
 use kiddo::{KdTree, SquaredEuclidean};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 struct BoardIdx {
     x: i32,
     y: i32,
@@ -50,6 +50,71 @@ impl<'a> Board<'a> {
     pub fn all_tag_indexes(&self) -> Vec<[usize; 4]> {
         self.found_board_idxs.values().filter_map(|i| *i).collect()
     }
+    pub fn try_fix_missing(&mut self) {
+        let fix_list: Vec<(BoardIdx, BoardIdx)> = self
+            .found_board_idxs
+            .iter()
+            .filter_map(|(bid, result)| {
+                if result.is_none() {
+                    let b0 = BoardIdx::new(bid.x + 1, bid.y);
+                    let b1 = BoardIdx::new(bid.x - 1, bid.y);
+                    let b2 = BoardIdx::new(bid.x, bid.y + 1);
+                    let b3 = BoardIdx::new(bid.x, bid.y - 1);
+                    if self.found_board_idxs.contains_key(&b0)
+                        && self.found_board_idxs.contains_key(&b1)
+                    {
+                        if self.found_board_idxs.get(&b0).unwrap().is_some()
+                            && self.found_board_idxs.get(&b1).unwrap().is_some()
+                        {
+                            return Some((b0, b1));
+                        }
+                    } else if self.found_board_idxs.contains_key(&b2)
+                        && self.found_board_idxs.contains_key(&b3)
+                    {
+                        if self.found_board_idxs.get(&b2).unwrap().is_some()
+                            && self.found_board_idxs.get(&b3).unwrap().is_some()
+                        {
+                            return Some((b2, b3));
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+        for (b0, b1) in fix_list {
+            let q0 = self.found_board_idxs.get(&b0).unwrap().unwrap();
+            let q1 = self.found_board_idxs.get(&b1).unwrap().unwrap();
+            let saddle_idxs: Vec<usize> = (0..4)
+                .into_iter()
+                .map(|i| {
+                    let x = (self.refined[q0[i]].p.0 + self.refined[q1[i]].p.0) / 2.0;
+                    let y = (self.refined[q0[i]].p.1 + self.refined[q1[i]].p.1) / 2.0;
+                    let n = self.tree.nearest_one::<SquaredEuclidean>(&[x, y]);
+                    n.item as usize
+                })
+                .collect();
+            // println!("try fixing {:?} {:?}", b0, b1);
+            if is_valid_quad(
+                &self.refined[saddle_idxs[0]],
+                &self.refined[saddle_idxs[1]],
+                &self.refined[saddle_idxs[2]],
+                &self.refined[saddle_idxs[3]],
+            ) {
+                let b = BoardIdx::new((b0.x + b1.x) / 2, (b0.y + b1.y) / 2);
+                // println!("suc");
+                self.found_board_idxs.insert(
+                    b,
+                    Some([
+                        saddle_idxs[0],
+                        saddle_idxs[1],
+                        saddle_idxs[2],
+                        saddle_idxs[3],
+                    ]),
+                );
+            }
+        }
+    }
+
     fn try_expand(&mut self, board_idx: &BoardIdx) {
         let start_board = self.found_board_idxs.get(board_idx).unwrap().to_owned();
         if let Some(quad_idxs) = start_board {
@@ -67,7 +132,9 @@ impl<'a> Board<'a> {
                 };
 
                 // TODO need review
-                if self.found_board_idxs.contains_key(&new_board_idx) && self.found_board_idxs.get(&new_board_idx).unwrap().is_some() {
+                if self.found_board_idxs.contains_key(&new_board_idx)
+                    && self.found_board_idxs.get(&new_board_idx).unwrap().is_some()
+                {
                     continue;
                 }
 
@@ -102,11 +169,6 @@ impl<'a> Board<'a> {
                         let new_s1 = self.refined[*s1_i];
                         let new_s2 = self.refined[*s2_i];
                         let new_s3 = self.refined[*s3_i];
-                        // if *s0_i == 354{
-                        //     println!("{} {} {} {}", *s0_i, *s1_i, *s2_i, *s3_i);
-                        //     println!("{}", is_valid_quad(&new_s0, &new_s1, &new_s2, &new_s3));
-                        //     // panic!("");
-                        // }
                         if is_valid_quad(&new_s0, &new_s1, &new_s2, &new_s3) {
                             return Some([*s0_i, *s1_i, *s2_i, *s3_i]);
                         }
@@ -122,7 +184,7 @@ impl<'a> Board<'a> {
         s1: &Saddle,
     ) -> (Vec<usize>, Vec<usize>) {
         let ratio0 = 1.0 + self.spacing_ratio;
-        let ratio1 = 0.2;
+        let ratio1 = 0.5;
         let angle_thres = 5.0;
         let v0 = glam::Vec2::new(s0.p.0, s0.p.1);
         let v1 = glam::Vec2::new(s1.p.0, s1.p.1);
@@ -133,7 +195,7 @@ impl<'a> Board<'a> {
         let nv0s = self.tree.nearest_n_within::<SquaredEuclidean>(
             &[new_v0.x, new_v0.y],
             ratio1 * v10_norm,
-            2,
+            3,
             true,
         );
         let new_s0: Vec<usize> = nv0s
@@ -153,7 +215,7 @@ impl<'a> Board<'a> {
         let nv1s = self.tree.nearest_n_within::<SquaredEuclidean>(
             &[new_v1.x, new_v1.y],
             ratio1 * v10_norm,
-            2,
+            3,
             true,
         );
         let new_s1: Vec<usize> = nv1s
