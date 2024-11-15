@@ -99,9 +99,13 @@ pub fn bit_code(
     let (bits, invalid_count): (u64, u32) = brightness_vec.iter().rev().enumerate().fold(
         (0u64, 0u32),
         |(acc, invalid_count), (i, b)| {
-            if (mid_b as i32 - *b as i32).abs() < valid_brightness_threshold as i32 {
-                (acc, invalid_count + 1)
-            } else if *b > mid_b {
+            let invalid_count =
+                if (mid_b as i32 - *b as i32).abs() < valid_brightness_threshold as i32 {
+                    invalid_count + 1
+                } else {
+                    invalid_count
+                };
+            if *b > mid_b {
                 (acc | (1 << i), invalid_count)
             } else {
                 (acc, invalid_count)
@@ -330,28 +334,28 @@ impl TagDetector {
             tag_families::TagFamily::T25H7 => TagDetector {
                 edge: 5,
                 border: 2,
-                hamming_distance: 1,
+                hamming_distance: 2,
                 code_list: tag_families::T25H7.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T25H9 => TagDetector {
                 edge: 5,
                 border: 2,
-                hamming_distance: 1,
+                hamming_distance: 2,
                 code_list: tag_families::T25H9.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11 => TagDetector {
                 edge: 6,
                 border: 2,
-                hamming_distance: 1,
+                hamming_distance: 3,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
             tag_families::TagFamily::T36H11B1 => TagDetector {
                 edge: 6,
                 border: 1,
-                hamming_distance: 1,
+                hamming_distance: 3,
                 code_list: tag_families::T36H11.to_vec(),
                 detector_params,
             },
@@ -488,18 +492,32 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
     let mut tree: KdTree<f32, 2> = (&entries).into();
 
     // quad search
-    let mut active_idxs: HashSet<usize> = (0..refined.len()).collect();
+    let active_idxs: HashSet<usize> = (0..refined.len()).collect();
     let (mut best_score, mut best_board_option) = (0, None);
     let mut count = 0;
-    let mut rng = rand::thread_rng();
-    let mut s0_idxs: Vec<&usize> = active_idxs.iter().collect();
-    s0_idxs.shuffle(&mut rng);
+    let mut hm = HashMap::<i32, Vec<usize>>::new();
+    refined.iter().enumerate().for_each(|(i, s)| {
+        let angle = s.theta.round() as i32;
+        if hm.contains_key(&angle) {
+            hm.get_mut(&angle).unwrap().push(i);
+        } else {
+            hm.insert(angle, vec![i]);
+        }
+    });
+    let mut s0_idxs: Vec<usize> = hm
+        .iter()
+        .sorted_by(|a, b| a.1.len().cmp(&b.1.len()))
+        .rev()
+        .next()
+        .unwrap()
+        .1
+        .to_owned();
     while !s0_idxs.is_empty() && count < 30 {
         // let mut tree = tree.clone();
         let s0_idx = s0_idxs.pop().unwrap();
         // active_idxs.remove(&s0_idx);
         // tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
-        let quads = init_quads(refined, *s0_idx, &tree);
+        let quads = init_quads(refined, s0_idx, &tree);
         for q in quads {
             let board = crate::board::Board::new(refined, &active_idxs, &q, 0.3, &tree);
             if board.score > best_score {
