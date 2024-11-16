@@ -70,12 +70,10 @@ impl<'a> Board<'a> {
                         }
                     } else if self.found_board_idxs.contains_key(&b2)
                         && self.found_board_idxs.contains_key(&b3)
+                        && self.found_board_idxs.get(&b2).unwrap().is_some()
+                        && self.found_board_idxs.get(&b3).unwrap().is_some()
                     {
-                        if self.found_board_idxs.get(&b2).unwrap().is_some()
-                            && self.found_board_idxs.get(&b3).unwrap().is_some()
-                        {
-                            return Some((b2, b3));
-                        }
+                        return Some((b2, b3));
                     }
                 }
                 None
@@ -85,7 +83,6 @@ impl<'a> Board<'a> {
             let q0 = self.found_board_idxs.get(&b0).unwrap().unwrap();
             let q1 = self.found_board_idxs.get(&b1).unwrap().unwrap();
             let saddle_idxs: Vec<usize> = (0..4)
-                .into_iter()
                 .map(|i| {
                     let x = (self.refined[q0[i]].p.0 + self.refined[q1[i]].p.0) / 2.0;
                     let y = (self.refined[q0[i]].p.1 + self.refined[q1[i]].p.1) / 2.0;
