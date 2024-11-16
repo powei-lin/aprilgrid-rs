@@ -486,6 +486,9 @@ pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> V
 }
 
 pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
+    if refined.is_empty() {
+        return None;
+    }
     let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.into()).collect();
     // use the kiddo::KdTree type to get up and running quickly with default settings
     let tree: KdTree<f32, 2> = (&entries).into();
