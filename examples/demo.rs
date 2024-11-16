@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
     let dataset_root = "data";
-    let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
+    // let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
     // let dataset_root =
     //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
     // let dataset_root = "test_data/data3";
