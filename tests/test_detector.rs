@@ -16,18 +16,18 @@ mod tests {
                     .unwrap();
                 let tags = detector.detect(&img);
                 println!("{}", tags.len());
-                assert!(tags.len() >= expected);
+                assert!(tags.len() == expected);
             }
         )*
         }
     }
 
     detector_tests! {
-        detect_iphone: (TagFamily::T36H11, "tests/data/iphone.png", 60),
+        detect_iphone: (TagFamily::T36H11, "tests/data/iphone.png", 66),
         detect_euroc: (TagFamily::T36H11, "tests/data/EuRoC.png", 36),
         detect_tum_vi: (TagFamily::T36H11, "tests/data/TUM_VI.png", 36),
-        detect_tum_vi_right: (TagFamily::T36H11, "tests/data/right.png", 33),
-        detect_tum_vi_r45: (TagFamily::T36H11, "tests/data/r45.png", 33),
-        detect_tum_vi_top: (TagFamily::T36H11, "tests/data/top.png", 33),
+        detect_tum_vi_right: (TagFamily::T36H11, "tests/data/right.png", 36),
+        detect_tum_vi_r45: (TagFamily::T36H11, "tests/data/r45.png", 36),
+        detect_tum_vi_top: (TagFamily::T36H11, "tests/data/top.png", 36),
     }
 }

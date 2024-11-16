@@ -85,7 +85,6 @@ impl<'a> Board<'a> {
             let q0 = self.found_board_idxs.get(&b0).unwrap().unwrap();
             let q1 = self.found_board_idxs.get(&b1).unwrap().unwrap();
             let saddle_idxs: Vec<usize> = (0..4)
-                .into_iter()
                 .map(|i| {
                     let x = (self.refined[q0[i]].p.0 + self.refined[q1[i]].p.0) / 2.0;
                     let y = (self.refined[q0[i]].p.1 + self.refined[q1[i]].p.1) / 2.0;

@@ -1,5 +1,4 @@
 use core::f32;
-use rand::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     f32::consts::PI,
@@ -489,7 +488,7 @@ pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> V
 pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
     let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.into()).collect();
     // use the kiddo::KdTree type to get up and running quickly with default settings
-    let mut tree: KdTree<f32, 2> = (&entries).into();
+    let tree: KdTree<f32, 2> = (&entries).into();
 
     // quad search
     let active_idxs: HashSet<usize> = (0..refined.len()).collect();
@@ -498,17 +497,16 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
     let mut hm = HashMap::<i32, Vec<usize>>::new();
     refined.iter().enumerate().for_each(|(i, s)| {
         let angle = s.theta.round() as i32;
-        if hm.contains_key(&angle) {
-            hm.get_mut(&angle).unwrap().push(i);
+        if let std::collections::hash_map::Entry::Vacant(e) = hm.entry(angle) {
+            e.insert(vec![i]);
         } else {
-            hm.insert(angle, vec![i]);
+            hm.get_mut(&angle).unwrap().push(i);
         }
     });
     let mut s0_idxs: Vec<usize> = hm
         .iter()
         .sorted_by(|a, b| a.1.len().cmp(&b.1.len()))
-        .rev()
-        .next()
+        .next_back()
         .unwrap()
         .1
         .to_owned();
@@ -525,11 +523,6 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
                 best_board_option = Some(board);
             }
         }
-        // TODO review this
-        // if best_score > 5 {
-        //     active_idxs.insert(s0_idx);
-        //     tree.add(&refined[s0_idx].arr(), s0_idx as u64);
-        // }
         if best_score >= 36 {
             break;
         }
