@@ -25,6 +25,7 @@ pub struct DetectorParams {
     pub tag_spacing_ratio: f32,
     pub min_saddle_angle: f32,
     pub max_saddle_angle: f32,
+    pub max_num_of_boards: u8,
 }
 
 impl DetectorParams {
@@ -33,6 +34,7 @@ impl DetectorParams {
             tag_spacing_ratio: 0.3,
             min_saddle_angle: 30.0,
             max_saddle_angle: 60.0,
+            max_num_of_boards: 2,
         }
     }
 }
@@ -430,15 +432,35 @@ impl TagDetector {
     pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
         let img_grey = img.to_luma8();
-        let refined = self.refined_saddle_points(img);
-        let best_board_indexes_option = try_find_best_board(&refined);
-        if let Some(best_board_indexes) = best_board_indexes_option {
-            for quad_indexes in best_board_indexes {
-                let quad_points: Vec<(f32, f32)> =
-                    quad_indexes.iter().map(|i| refined[*i].p).collect();
-                if let Some((tag_id, refined_arr)) = self.try_decode_quad(&img_grey, &quad_points) {
-                    detected_tags.insert(tag_id as u32, refined_arr);
+        let mut refined = self.refined_saddle_points(img);
+
+        for _ in 0..self.detector_params.max_num_of_boards {
+            let best_board_indexes_option = try_find_best_board(&refined);
+            if let Some(best_board_indexes) = best_board_indexes_option {
+                let mut indexs_to_remove = HashSet::new();
+                for quad_indexes in best_board_indexes {
+                    let quad_points: Vec<(f32, f32)> =
+                        quad_indexes.iter().map(|i| refined[*i].p).collect();
+                    if let Some((tag_id, refined_arr)) =
+                        self.try_decode_quad(&img_grey, &quad_points)
+                    {
+                        detected_tags.insert(tag_id as u32, refined_arr);
+                        for qi in quad_indexes {
+                            indexs_to_remove.insert(qi);
+                        }
+                    }
                 }
+                refined = refined
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, s)| {
+                        if indexs_to_remove.contains(&i) {
+                            None
+                        } else {
+                            Some(*s)
+                        }
+                    })
+                    .collect();
             }
         }
         detected_tags
@@ -514,10 +536,7 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
         .1
         .to_owned();
     while !s0_idxs.is_empty() && count < 30 {
-        // let mut tree = tree.clone();
         let s0_idx = s0_idxs.pop().unwrap();
-        // active_idxs.remove(&s0_idx);
-        // tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
         let quads = init_quads(refined, s0_idx, &tree);
         for q in quads {
             let board = crate::board::Board::new(refined, &active_idxs, &q, 0.3, &tree);

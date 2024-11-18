@@ -40,9 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recording = rerun::RecordingStreamBuilder::new("aprilgrid").spawn()?;
     let dataset_root = "data";
     // let dataset_root = "/Users/powei/Documents/dataset/EuRoC/calibration/mav0/cam0/data";
-    // let dataset_root =
-    //     "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
-    // let dataset_root = "test_data/data3";
+    let dataset_root =
+        "/Users/powei/Documents/dataset/tum_vi/dataset-calib-cam1_1024_16/mav0/cam0/data";
+    // let dataset_root = "test_data/data4";
     let img_paths = glob(format!("{}/*.png", dataset_root).as_str()).expect("failed");
     let mut time_sec = 0.0;
     let fps = 60.0;
@@ -103,7 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("/cam0/corners"),
                 &rerun::Points2D::new(rerun_shift(&corner_list))
                     .with_colors(corner_colors)
-                    .with_radii([rerun::Radius::new_ui_points(2.0)]), // .with_labels(memo),
+                    .with_radii([rerun::Radius::new_ui_points(2.0)])
+                    .with_labels(memo),
             )
             .expect("msg");
         recording
