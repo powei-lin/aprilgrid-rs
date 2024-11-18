@@ -29,5 +29,6 @@ mod tests {
         detect_tum_vi_right: (TagFamily::T36H11, "tests/data/right.png", 36),
         detect_tum_vi_r45: (TagFamily::T36H11, "tests/data/r45.png", 36),
         detect_tum_vi_top: (TagFamily::T36H11, "tests/data/top.png", 36),
+        detect_two_boards: (TagFamily::T36H11, "tests/data/two_boards.png", 72),
     }
 }

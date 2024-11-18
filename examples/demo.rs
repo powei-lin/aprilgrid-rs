@@ -103,7 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("/cam0/corners"),
                 &rerun::Points2D::new(rerun_shift(&corner_list))
                     .with_colors(corner_colors)
-                    .with_radii([rerun::Radius::new_ui_points(2.0)]), // .with_labels(memo),
+                    .with_radii([rerun::Radius::new_ui_points(2.0)])
+                    .with_labels(memo),
             )
             .expect("msg");
         recording
