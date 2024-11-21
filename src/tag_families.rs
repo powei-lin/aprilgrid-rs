@@ -2,6 +2,7 @@
 // Get from following:
 // https://github.com/ethz-asl/kalibr/blob/master/aslam_offline_calibration/kalibr/python/kalibr_create_target_pdf
 
+#[derive(Debug, Clone, Copy)]
 pub enum TagFamily {
     T16H5,
     T25H7,
@@ -9,6 +10,21 @@ pub enum TagFamily {
     T36H11,
     /// 1 bit Border
     T36H11B1,
+}
+
+impl std::str::FromStr for TagFamily {
+    type Err = std::fmt::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "t16h5" | "T16H5" => Ok(TagFamily::T16H5),
+            "t25h7" | "T25H7" => Ok(TagFamily::T25H7),
+            "t25h9" | "T25H9" => Ok(TagFamily::T25H9),
+            "t36h11" | "T36H11" => Ok(TagFamily::T36H11),
+            "t36h11b1" | "T36H11B1" => Ok(TagFamily::T36H11B1),
+            _ => Err(std::fmt::Error),
+        }
+    }
 }
 
 pub const T16H5: [u64; 30] = [
@@ -641,10 +657,3 @@ pub const T36H11: [u64; 587] = [
     0x2459068FB,
     0xE83BE4B73,
 ];
-
-// APRILTAG_CODE_DICT = {
-//     "t16h5": t16h5,
-//     "t25h7": t25h7,
-//     "t25h9": t25h9,
-//     "t36h11": t36h11,
-// }
