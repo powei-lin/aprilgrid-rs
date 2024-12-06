@@ -964,6 +964,16 @@ class BaseAprilGrid:
     def file_name(self) -> str:
         return f"{self.tag_family_name}_{self.size_x}x{self.size_y}_start_id_{self.first_marker}"
 
+    def to_config(self) -> dict:
+        d = {
+            "tag_size_meter": self.marker_length_meter,
+            "tag_spacing": self.tag_spacing,
+            "tag_rows": self.size_y,
+            "tag_cols": self.size_x,
+            "first_id": 0,
+        }
+        return d
+
 
 def draw_preview(board: BaseAprilGrid, scale: float = 1) -> np.ndarray:
     """Creates an image preview of what the chart looks like.
@@ -1011,6 +1021,11 @@ def generate_printable_chart(
     _svg.save(pretty=True)
     if save_pdf:
         cairosvg.svg2pdf(bytestring=_svg.tostring(), write_to=f"{outfile_path}.pdf")
+    json_path = f"{outfile_path}.json"
+    with open(json_path, "w") as f:
+        import json
+
+        json.dump(board.to_config(), f, indent=2)
 
 
 def create_svg(board: BaseAprilGrid):
