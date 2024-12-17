@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use faer::solvers::SpSolver;
+use faer::prelude::SpSolver;
 
 pub fn find_xy(a0: f32, b0: f32, c0: f32, a1: f32, b1: f32, c1: f32) -> (f32, f32) {
     let a = faer::mat![[a0, b0], [a1, b1]];
