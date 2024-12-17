@@ -8,7 +8,7 @@ use std::{
 use crate::image_util::GrayImagef32;
 use crate::saddle::Saddle;
 use crate::{image_util, math_util, tag_families};
-use faer::solvers::SpSolverLstsq;
+use faer::prelude::SpSolverLstsq;
 use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
 use itertools::Itertools;
 use kiddo::{KdTree, SquaredEuclidean};

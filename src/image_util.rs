@@ -1,4 +1,4 @@
-use faer::{self, solvers::SpSolverLstsq};
+use faer::prelude::*;
 use image::{GenericImage, GenericImageView};
 pub type GrayImagef32 = image::ImageBuffer<image::Luma<f32>, Vec<f32>>;
 

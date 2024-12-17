@@ -1,7 +1,10 @@
 use crate::saddle::{is_valid_quad, Saddle};
 use glam;
 use kiddo::{KdTree, SquaredEuclidean};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZero,
+};
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 struct BoardIdx {
@@ -192,7 +195,7 @@ impl<'a> Board<'a> {
         let nv0s = self.tree.nearest_n_within::<SquaredEuclidean>(
             &[new_v0.x, new_v0.y],
             ratio1 * v10_norm,
-            3,
+            NonZero::new(3).unwrap(),
             true,
         );
         let new_s0: Vec<usize> = nv0s
@@ -212,7 +215,7 @@ impl<'a> Board<'a> {
         let nv1s = self.tree.nearest_n_within::<SquaredEuclidean>(
             &[new_v1.x, new_v1.y],
             ratio1 * v10_norm,
-            3,
+            NonZero::new(3).unwrap(),
             true,
         );
         let new_s1: Vec<usize> = nv1s
