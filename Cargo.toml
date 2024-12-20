@@ -1,6 +1,6 @@
 [package]
 name = "aprilgrid"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 authors = ["Powei Lin <poweilin1994@gmail.com>"]
 readme = "README.md"
@@ -13,7 +13,7 @@ categories = ["data-structures", "science", "mathematics"]
 exclude = ["/.github/*", "*.ipynb", "./scripts/*", "examples/*", "tests/*"]
 
 [dependencies]
-faer = "0.19.5"
+faer = "0.20.0"
 glam = "0.29.2"
 image = "0.25.4"
 imageproc = "0.25.0"
@@ -23,7 +23,7 @@ rand = "0.8.5"
 
 [dev-dependencies]
 clap = { version = "4.5.23", features = ["derive"] }
-env_logger = "0.11.5"
+env_logger = "0.11.6"
 glob = "0.3.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
