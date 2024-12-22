@@ -429,6 +429,33 @@ impl TagDetector {
         None
     }
 
+    #[cfg(feature = "kornia")]
+    pub fn detect_kornia<const N: usize>(
+        &self,
+        img: &kornia::image::Image<u8, N>,
+    ) -> HashMap<u32, [(f32, f32); 4]> {
+        let dyn_img = match img.num_channels() {
+            1 => DynamicImage::ImageLuma8(
+                GrayImage::from_vec(
+                    img.width() as u32,
+                    img.height() as u32,
+                    img.clone().0.into_vec(),
+                )
+                .unwrap(),
+            ),
+            3 => DynamicImage::ImageRgb8(
+                image::RgbImage::from_vec(
+                    img.width() as u32,
+                    img.height() as u32,
+                    img.clone().0.into_vec(),
+                )
+                .unwrap(),
+            ),
+            _ => panic!(),
+        };
+        self.detect(&dyn_img)
+    }
+
     pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
         let img_grey = img.to_luma8();

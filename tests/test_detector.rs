@@ -31,4 +31,14 @@ mod tests {
         detect_tum_vi_top: (TagFamily::T36H11, "tests/data/top.png", 36),
         detect_two_boards: (TagFamily::T36H11, "tests/data/two_boards.png", 72),
     }
+
+    #[test]
+    #[cfg(feature = "kornia")]
+    fn test_kornia() {
+        let image: kornia::image::Image<u8, 3> =
+            kornia::io::functional::read_image_any("tests/data/iphone.png").unwrap();
+        let detector = detector::TagDetector::new(&TagFamily::T36H11, None);
+        let tags = detector.detect_kornia(&image);
+        assert!(tags.len() == 66);
+    }
 }
