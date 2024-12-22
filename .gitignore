@@ -5,3 +5,4 @@ test_data
 venv
 *.svg
 *.pdf
+.ruff_cache
