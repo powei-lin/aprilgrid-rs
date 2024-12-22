@@ -13,7 +13,7 @@ categories = ["data-structures", "science", "mathematics"]
 exclude = [
     "/.github/*",
     "*.ipynb",
-    "./scripts/*",
+    "scripts/*",
     "examples/*",
     "tests/*",
     "venv/*",
