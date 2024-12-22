@@ -1,6 +1,6 @@
 [package]
 name = "aprilgrid"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2021"
 authors = ["Powei Lin <poweilin1994@gmail.com>"]
 readme = "README.md"
@@ -13,13 +13,17 @@ categories = ["data-structures", "science", "mathematics"]
 exclude = ["/.github/*", "*.ipynb", "./scripts/*", "examples/*", "tests/*"]
 
 [dependencies]
-faer = "0.20.0"
+faer = "0.20.1"
 glam = "0.29.2"
 image = "0.25.4"
 imageproc = "0.25.0"
 itertools = "0.13.0"
-kiddo = "5.0.2"
+kiddo = "5.0.3"
+kornia = {version = "0.1.7", optional = true}
 rand = "0.8.5"
+
+[features]
+kornia = ["dep:kornia"]
 
 [dev-dependencies]
 clap = { version = "4.5.23", features = ["derive"] }
