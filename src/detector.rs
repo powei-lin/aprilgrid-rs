@@ -451,7 +451,7 @@ impl TagDetector {
                 )
                 .unwrap(),
             ),
-            _ => panic!(),
+            _ => panic!("Only support u8c1 and u8c3"),
         };
         self.detect(&dyn_img)
     }
