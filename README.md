@@ -23,6 +23,12 @@ let detector = aprilgrid::detector::TagDetector::new(&aprilgrid::TagFamily::T36H
 
 // detect tags
 let tags = detector.detect(&img);
+
+// support kornia image
+// cargo add aprilgrid -F kornia
+let image: kornia::image::Image<u8, 3> =
+    kornia::io::functional::read_image_any("...").unwrap();
+let tags = detector.detect_kornia(&image);
 ```
 
 ## Example
@@ -37,7 +43,7 @@ cargo test -r
 
 ## TODO
 - [ ] Robustness.
-- [ ] Unit tests.
+- [x] Unit tests.
 
 ## Reference
 - https://github.com/AprilRobotics/apriltag
