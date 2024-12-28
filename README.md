@@ -45,6 +45,12 @@ cargo test -r
 - [ ] Robustness.
 - [x] Unit tests.
 
+## Generate chart pdf
+```sh
+pip install opencv-python pillow cairosvg svgwrite
+python3 scripts/generate_aprilgrid.py -h
+```
+
 ## Reference
 - https://github.com/AprilRobotics/apriltag
 - https://github.com/ethz-asl/kalibr

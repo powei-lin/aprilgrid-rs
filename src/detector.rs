@@ -120,16 +120,20 @@ pub fn bit_code(
     }
 }
 
-fn rotate_bits(bits: u64, edge_bits: u8) -> u64 {
+const fn rotate_bits(bits: u64, edge_bits: u8) -> u64 {
     let edge_bits = edge_bits as usize;
     let mut b = 0u64;
     let mut count = 0;
-    for r in (0..edge_bits).rev() {
-        for c in 0..edge_bits {
-            let idx = r + c * edge_bits;
+    let mut r = (edge_bits - 1) as i32;
+    while r >= 0 {
+        let mut c = 0;
+        while c < edge_bits {
+            let idx = r as usize + c * edge_bits;
             b |= ((bits >> idx) & 1) << count;
-            count += 1
+            count += 1;
+            c += 1;
         }
+        r -= 1;
     }
     b
 }
