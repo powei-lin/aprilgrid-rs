@@ -8,7 +8,7 @@ use std::{
 use crate::image_util::GrayImagef32;
 use crate::saddle::Saddle;
 use crate::{image_util, math_util, tag_families};
-use faer::prelude::SpSolverLstsq;
+use faer::linalg::solvers::SolveLstsqCore;
 use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
 use itertools::Itertools;
 use kiddo::{KdTree, SquaredEuclidean};
@@ -275,7 +275,10 @@ where
                 count += 1;
             }
         }
-        let params = mat_a.qr().solve_lstsq(mat_b);
+        let mut params = mat_b;
+        mat_a
+            .qr()
+            .solve_lstsq_in_place_with_conj(faer::Conj::No, params.as_mut());
 
         let a1 = params[(0, 0)];
         let a2 = params[(1, 0)];
