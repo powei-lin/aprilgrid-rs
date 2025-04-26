@@ -2,7 +2,7 @@ use glob::glob;
 use image::{DynamicImage, ImageReader};
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
-use rerun::RecordingStream;
+use rerun::{RecordingStream, TimeCell};
 use std::io::Cursor;
 
 fn log_image_as_compressed(recording: &RecordingStream, topic: &str, img: &DynamicImage) {
@@ -13,13 +13,13 @@ fn log_image_as_compressed(recording: &RecordingStream, topic: &str, img: &Dynam
     recording
         .log(
             format!("{}/image", topic),
-            &rerun::Image::from_file_contents(bytes, None).unwrap(),
+            &rerun::EncodedImage::from_file_contents(bytes),
         )
         .unwrap();
 }
 fn id_to_color(id: usize) -> (u8, u8, u8, u8) {
     let mut rng = ChaCha8Rng::seed_from_u64(id as u64);
-    let color_num = rng.gen_range(0..2u32.pow(24));
+    let color_num = rng.random_range(0..2u32.pow(24));
 
     (
         ((color_num >> 16) % 256) as u8,
@@ -68,9 +68,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut memo = Vec::new();
 
         if time_ns != 0 {
-            recording.set_time_nanos("stable_time", time_ns);
+            recording.set_time(
+                "stable_time",
+                TimeCell::from_timestamp_nanos_since_epoch(time_ns),
+            );
         } else {
-            recording.set_time_seconds("stable_time", time_sec);
+            recording.set_timestamp_secs_since_epoch("stable_time", time_sec);
             time_sec += one_frame_time;
         }
         let tags = detector.detect(&img0);
