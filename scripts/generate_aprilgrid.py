@@ -1051,7 +1051,7 @@ def create_svg(board: BaseAprilGrid):
     dwg.add(
         dwg.rect(
             insert=(0, 0),
-            size=(board.page_width_meter, board.page_height_meter),
+            size=(page_width_mm, page_height_mm),
             fill="white",
         )
     )
@@ -1202,6 +1202,8 @@ def main():
         args.page_height_meter,
     )
     generate_printable_chart(board)
+    img = draw_preview(board)
+    cv2.imwrite(f"{board.file_name()}.png", img)
 
 
 if __name__ == "__main__":
