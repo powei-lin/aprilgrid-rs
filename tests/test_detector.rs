@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use aprilgrid::{detector, TagFamily};
+    use aprilgrid::{TagFamily, detector};
     use image::ImageReader;
 
     macro_rules! detector_tests {

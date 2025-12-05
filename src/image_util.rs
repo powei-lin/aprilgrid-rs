@@ -18,15 +18,15 @@ pub fn tag_homography(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> fae
             *mat_a.get_mut_unchecked(p * 2, 0) = source[p].0;
             *mat_a.get_mut_unchecked(p * 2, 1) = source[p].1;
             *mat_a.get_mut_unchecked(p * 2, 2) = 1.0;
-            *mat_a.get_mut_unchecked(p * 2, 6) = -1.0 * corners[p].0 * source[p].0;
-            *mat_a.get_mut_unchecked(p * 2, 7) = -1.0 * corners[p].0 * source[p].1;
-            *mat_a.get_mut_unchecked(p * 2, 8) = -1.0 * corners[p].0;
+            *mat_a.get_mut_unchecked(p * 2, 6) = -corners[p].0 * source[p].0;
+            *mat_a.get_mut_unchecked(p * 2, 7) = -corners[p].0 * source[p].1;
+            *mat_a.get_mut_unchecked(p * 2, 8) = -corners[p].0;
             *mat_a.get_mut_unchecked(p * 2 + 1, 3) = source[p].0;
             *mat_a.get_mut_unchecked(p * 2 + 1, 4) = source[p].1;
             *mat_a.get_mut_unchecked(p * 2 + 1, 5) = 1.0;
-            *mat_a.get_mut_unchecked(p * 2 + 1, 6) = -1.0 * corners[p].1 * source[p].0;
-            *mat_a.get_mut_unchecked(p * 2 + 1, 7) = -1.0 * corners[p].1 * source[p].1;
-            *mat_a.get_mut_unchecked(p * 2 + 1, 8) = -1.0 * corners[p].1;
+            *mat_a.get_mut_unchecked(p * 2 + 1, 6) = -corners[p].1 * source[p].0;
+            *mat_a.get_mut_unchecked(p * 2 + 1, 7) = -corners[p].1 * source[p].1;
+            *mat_a.get_mut_unchecked(p * 2 + 1, 8) = -corners[p].1;
         }
     }
     // let svd = (mat_a.transpose()*mat_a.clone()).svd();
@@ -118,5 +118,87 @@ pub fn pixel_bfs(
             pixel_bfs(mat, cluster, x, y + 1, threshold);
             pixel_bfs(mat, cluster, x, y + 1, threshold);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageBuffer, Luma};
+
+    #[test]
+    fn test_tag_homography() {
+        // Simple case: identity mapping (with some scaling/translation)
+        // corners: (0,0), (0,10), (10,10), (10,0)
+        // side_bits: 10
+        // margin: 0
+        // source: (0,0), (0,9), (9,9), (9,0)
+        // This should result in a homography that maps source to corners.
+        // corners are roughly same as source but scaled by 10/9.
+        let corners = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)];
+        let h = tag_homography(&corners, 10, 0.0);
+        assert!(h.nrows() == 3);
+        assert!(h.ncols() == 3);
+        // We don't easily check values without applying it, but it shouldn't panic.
+    }
+
+    #[test]
+    fn test_tag_affine() {
+        let corners = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)];
+        let h = tag_affine(&corners, 10, 0.0);
+        assert!(h.nrows() == 3);
+        assert!(h.ncols() == 3);
+        assert!((h[(2, 0)] - 0.0).abs() < 1e-6);
+        assert!((h[(2, 1)] - 0.0).abs() < 1e-6);
+        assert!((h[(2, 2)] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_hessian_response() {
+        let mut img = GrayImagef32::new(5, 5);
+        // Set center pixel high, neighbors low -> high curvature
+        for y in 0..5 {
+            for x in 0..5 {
+                img.put_pixel(x, y, Luma([0.0]));
+            }
+        }
+        img.put_pixel(2, 2, Luma([10.0]));
+
+        // Hessian response should be non-zero around center
+        let resp = hessian_response(&img);
+        // Center (2,2) response depends on neighbors.
+        // At (2,2): v22=10, others=0.
+        // lxx = 0 - 20 + 0 = -20
+        // lyy = 0 - 20 + 0 = -20
+        // lxy = 0
+        // det = 400
+        // But the function iterates 1..h-1, 1..w-1.
+        // So (2,2) is computed.
+        let val = resp.get_pixel(2, 2)[0];
+        assert!(val > 0.0);
+    }
+
+    #[test]
+    fn test_pixel_bfs() {
+        let mut img = GrayImagef32::new(5, 5);
+        for y in 0..5 {
+            for x in 0..5 {
+                img.put_pixel(x, y, Luma([100.0]));
+            }
+        }
+        // Create a dark region
+        img.put_pixel(2, 2, Luma([10.0]));
+        img.put_pixel(2, 3, Luma([10.0]));
+
+        let mut cluster = Vec::new();
+        pixel_bfs(&mut img, &mut cluster, 2, 2, 50.0);
+
+        assert_eq!(cluster.len(), 2);
+        assert!(cluster.contains(&(2, 2)));
+        assert!(cluster.contains(&(2, 3)));
+
+        // Visited pixels should be set to MAX
+        assert_eq!(img.get_pixel(2, 2)[0], f32::MAX);
+        assert_eq!(img.get_pixel(2, 3)[0], f32::MAX);
     }
 }

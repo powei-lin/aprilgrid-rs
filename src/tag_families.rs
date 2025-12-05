@@ -657,3 +657,29 @@ pub const T36H11: [u64; 587] = [
     0x2459068FB,
     0xE83BE4B73,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_tag_family_from_str() {
+        assert!(matches!(
+            TagFamily::from_str("t36h11"),
+            Ok(TagFamily::T36H11)
+        ));
+        assert!(matches!(
+            TagFamily::from_str("T36H11"),
+            Ok(TagFamily::T36H11)
+        ));
+        assert!(matches!(TagFamily::from_str("t16h5"), Ok(TagFamily::T16H5)));
+        assert!(matches!(TagFamily::from_str("t25h9"), Ok(TagFamily::T25H9)));
+        assert!(matches!(
+            TagFamily::from_str("t36h11b1"),
+            Ok(TagFamily::T36H11B1)
+        ));
+
+        assert!(TagFamily::from_str("invalid").is_err());
+    }
+}

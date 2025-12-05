@@ -1,12 +1,12 @@
 use aprilgrid::board::Board;
 use aprilgrid::detector::{best_tag, bit_code, decode_positions, try_find_best_board};
-use aprilgrid::saddle::{is_valid_quad, Saddle};
+use aprilgrid::saddle::{Saddle, is_valid_quad};
 use core::f32;
 use glam::{Vec2, Vec2Swizzles};
 use glob::glob;
 use image::{
-    imageops::FilterType::{Nearest, Triangle},
     DynamicImage, GenericImage, GenericImageView, GrayImage, ImageReader,
+    imageops::FilterType::{Nearest, Triangle},
 };
 use itertools::Itertools;
 use kiddo::{KdTree, SquaredEuclidean};

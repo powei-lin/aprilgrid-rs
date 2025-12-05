@@ -304,7 +304,7 @@ where
                 let c4 = (a1 - a3) / 2.0;
                 let c3 = a2 / 2.0;
                 let k = (c4 * c4 + c3 * c3).sqrt();
-                let phi = (-1.0 * c5 / k).acos() / 2.0 / PI * 180.0;
+                let phi = (-c5 / k).acos() / 2.0 / PI * 180.0;
 
                 let theta = c3.atan2(c4) / 2.0 / PI * 180.0;
 
