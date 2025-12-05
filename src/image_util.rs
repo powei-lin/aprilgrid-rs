@@ -1,6 +1,70 @@
 use faer::linalg::solvers::SolveLstsqCore;
+#[cfg(feature = "image")]
 use image::{GenericImage, GenericImageView};
+
+#[cfg(feature = "image")]
 pub type GrayImagef32 = image::ImageBuffer<image::Luma<f32>, Vec<f32>>;
+
+#[cfg(feature = "kornia")]
+pub type GrayImagef32Kornia = kornia::image::Image<f32, 1, kornia::image::CpuAllocator>;
+
+pub trait AprilGridImage {
+    fn width(&self) -> u32;
+    fn height(&self) -> u32;
+    fn get_pixel_f32(&self, x: u32, y: u32) -> f32;
+}
+
+#[cfg(feature = "image")]
+impl AprilGridImage for GrayImagef32 {
+    fn width(&self) -> u32 {
+        self.width()
+    }
+    fn height(&self) -> u32 {
+        self.height()
+    }
+    fn get_pixel_f32(&self, x: u32, y: u32) -> f32 {
+        unsafe { self.unsafe_get_pixel(x, y).0[0] }
+    }
+}
+
+#[cfg(feature = "image")]
+impl AprilGridImage for image::GrayImage {
+    fn width(&self) -> u32 {
+        self.width()
+    }
+    fn height(&self) -> u32 {
+        self.height()
+    }
+    fn get_pixel_f32(&self, x: u32, y: u32) -> f32 {
+        unsafe { self.unsafe_get_pixel(x, y).0[0] as f32 }
+    }
+}
+
+#[cfg(feature = "kornia")]
+impl<A: kornia::image::ImageAllocator> AprilGridImage for kornia::image::Image<f32, 1, A> {
+    fn width(&self) -> u32 {
+        self.cols() as u32
+    }
+    fn height(&self) -> u32 {
+        self.rows() as u32
+    }
+    fn get_pixel_f32(&self, x: u32, y: u32) -> f32 {
+        self.get_pixel(x as usize, y as usize)[0]
+    }
+}
+
+#[cfg(feature = "kornia")]
+impl<A: kornia::image::ImageAllocator> AprilGridImage for kornia::image::Image<u8, 1, A> {
+    fn width(&self) -> u32 {
+        self.cols() as u32
+    }
+    fn height(&self) -> u32 {
+        self.rows() as u32
+    }
+    fn get_pixel_f32(&self, x: u32, y: u32) -> f32 {
+        self.get_pixel(x as usize, y as usize)[0] as f32
+    }
+}
 
 pub fn tag_homography(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::Mat<f32> {
     let source = [
@@ -69,6 +133,7 @@ pub fn tag_affine(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::M
     faer::mat![[h[0], h[1], h[2]], [h[3], h[4], h[5]], [0.0, 0.0, 1.0],]
 }
 
+#[cfg(feature = "image")]
 pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
     let mut out = GrayImagef32::new(img.width(), img.height());
     for r in 1..(img.height() - 1) {
@@ -99,6 +164,36 @@ pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
     out
 }
 
+#[cfg(feature = "kornia")]
+pub fn hessian_response_kornia(img: &GrayImagef32Kornia) -> GrayImagef32Kornia {
+    let mut out = kornia::image::Image::from_size_val(img.size(), 0.0).unwrap();
+    for r in 1..(img.height() - 1) {
+        for c in 1..(img.width() - 1) {
+            let (v11, v12, v13, v21, v22, v23, v31, v32, v33) = {
+                (
+                    img.get_pixel(c - 1, r - 1)[0],
+                    img.get_pixel(c, r - 1)[0],
+                    img.get_pixel(c + 1, r - 1)[0],
+                    img.get_pixel(c - 1, r)[0],
+                    img.get_pixel(c, r)[0],
+                    img.get_pixel(c + 1, r)[0],
+                    img.get_pixel(c - 1, r + 1)[0],
+                    img.get_pixel(c, r + 1)[0],
+                    img.get_pixel(c + 1, r + 1)[0],
+                )
+            };
+            let lxx = v21 - 2.0 * v22 + v23;
+            let lyy = v12 - 2.0 * v22 + v32;
+            let lxy = (v13 - v11 + v31 - v33) / 4.0;
+
+            /* normalize and write out */
+            out.set_pixel(c, r, [lxx * lyy - lxy * lxy]).unwrap();
+        }
+    }
+    out
+}
+
+#[cfg(feature = "image")]
 pub fn pixel_bfs(
     mat: &mut GrayImagef32,
     cluster: &mut Vec<(u32, u32)>,
@@ -117,6 +212,27 @@ pub fn pixel_bfs(
             pixel_bfs(mat, cluster, x + 1, y, threshold);
             pixel_bfs(mat, cluster, x, y + 1, threshold);
             pixel_bfs(mat, cluster, x, y + 1, threshold);
+        }
+    }
+}
+
+#[cfg(feature = "kornia")]
+pub fn pixel_bfs_kornia(
+    mat: &mut GrayImagef32Kornia,
+    cluster: &mut Vec<(u32, u32)>,
+    x: u32,
+    y: u32,
+    threshold: f32,
+) {
+    if x < mat.width() as u32 && y < mat.height() as u32 {
+        let v = mat.get_pixel(x as usize, y as usize)[0];
+        if v < threshold {
+            cluster.push((x, y));
+            mat.set_pixel(x as usize, y as usize, [f32::MAX]).unwrap();
+            pixel_bfs_kornia(mat, cluster, x - 1, y, threshold);
+            pixel_bfs_kornia(mat, cluster, x + 1, y, threshold);
+            pixel_bfs_kornia(mat, cluster, x, y + 1, threshold);
+            pixel_bfs_kornia(mat, cluster, x, y + 1, threshold);
         }
     }
 }

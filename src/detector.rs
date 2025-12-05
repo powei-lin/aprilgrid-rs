@@ -5,13 +5,19 @@ use std::{
     ops::BitXor,
 };
 
+use crate::image_util::AprilGridImage;
 use crate::image_util::GrayImagef32;
+#[cfg(feature = "kornia")]
+use crate::image_util::GrayImagef32Kornia;
 use crate::saddle::Saddle;
 use crate::{image_util, math_util, tag_families};
 use faer::linalg::solvers::SolveLstsqCore;
+#[cfg(feature = "image")]
 use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
 use itertools::Itertools;
 use kiddo::{KdTree, SquaredEuclidean};
+#[cfg(feature = "kornia")]
+use kornia::image::{Image, ImageAllocator};
 
 pub struct TagDetector {
     edge: u8,
@@ -71,7 +77,7 @@ pub fn decode_positions(
 }
 
 pub fn bit_code(
-    img: &GrayImage,
+    img: &impl AprilGridImage,
     decode_pts: &[(f32, f32)],
     valid_brightness_threshold: u8,
     max_invalid_bit: u32,
@@ -83,7 +89,7 @@ pub fn bit_code(
             if x >= img.width() || y >= img.height() {
                 None
             } else {
-                Some(img.get_pixel(x, y).0[0])
+                Some(img.get_pixel_f32(x, y) as u8)
             }
         })
         .collect();
@@ -187,14 +193,11 @@ pub struct Tag {
     pub p: [(f32, f32); 4],
 }
 
-pub fn rochade_refine<T>(
-    image_input: &ImageBuffer<Luma<T>, Vec<T>>,
+pub fn rochade_refine(
+    image_input: &impl AprilGridImage,
     initial_corners: &Vec<(f32, f32)>,
     half_size_patch: i32,
-) -> Vec<Saddle>
-where
-    T: image::Primitive + Into<f32>,
-{
+) -> Vec<Saddle> {
     const PIXEL_MOVE_THRESHOLD: f32 = 1.0;
     let mut refined_corners = Vec::<Saddle>::new();
     // kernel
@@ -232,27 +235,21 @@ where
             continue;
         }
 
-        // patch
-        let patch_size: usize = 4 * half_size_patch as usize + 1;
-        let patch = image_input.view(
-            (round_x - half_size_patch2) as u32,
-            (round_y - half_size_patch2) as u32,
-            (patch_size) as u32,
-            (patch_size) as u32,
-        );
-
         let mut smooth_sub_image: faer::Mat<f32> = faer::Mat::zeros(kernel_size, kernel_size);
         for r in 0..kernel_size {
             for c in 0..kernel_size {
-                let sub_patch_vec: Vec<f32> = patch
-                    .view(c as u32, r as u32, kernel_size as u32, kernel_size as u32)
-                    .pixels()
-                    .map(|(_, _, v)| v.0[0].into())
-                    .collect();
-                let conv_p = sub_patch_vec
-                    .iter()
-                    .zip(&flat_k)
-                    .fold(0.0_f32, |acc, (k, p)| acc + k * p);
+                // Convolve
+                let mut conv_p = 0.0;
+                let mut k_idx = 0;
+                for kr in 0..kernel_size {
+                    for kc in 0..kernel_size {
+                        let px = (round_x - half_size_patch2) + (c as i32) + (kc as i32);
+                        let py = (round_y - half_size_patch2) + (r as i32) + (kr as i32);
+                        let val = image_input.get_pixel_f32(px as u32, py as u32);
+                        conv_p += val * flat_k[k_idx];
+                        k_idx += 1;
+                    }
+                }
                 smooth_sub_image[(r, c)] = conv_p;
             }
         }
@@ -370,6 +367,7 @@ impl TagDetector {
         }
     }
 
+    #[cfg(feature = "image")]
     pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
         let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
         let hessian_response_mat = image_util::hessian_response(&blur);
@@ -408,7 +406,7 @@ impl TagDetector {
 
     fn try_decode_quad(
         &self,
-        img_grey: &GrayImage,
+        img_grey: &impl AprilGridImage,
         quad_points: &[(f32, f32)],
     ) -> Option<(usize, [(f32, f32); 4])> {
         let homo_points_option = decode_positions(
@@ -463,6 +461,7 @@ impl TagDetector {
         self.detect(&dyn_img)
     }
 
+    #[cfg(feature = "image")]
     pub fn detect(&self, img: &DynamicImage) -> HashMap<u32, [(f32, f32); 4]> {
         let mut detected_tags = HashMap::new();
         let img_grey = img.to_luma8();
