@@ -172,10 +172,14 @@ fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u
     let mut clusters = Vec::new();
     for r in 1..h_mat.height() - 1 {
         for c in 1..h_mat.width() - 1 {
-            let mut cluster = Vec::new();
-            image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
-            if !cluster.is_empty() {
-                clusters.push(cluster);
+            // Check if pixel is candidate before allocating vector
+            let v = unsafe { tmp_h_mat.unsafe_get_pixel(c, r).0[0] };
+            if v < threshold {
+                let mut cluster = Vec::new();
+                image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
+                if !cluster.is_empty() {
+                    clusters.push(cluster);
+                }
             }
         }
     }
@@ -217,8 +221,70 @@ where
     let s = flat_k_slice.iter().sum::<f32>();
     let flat_k: Vec<f32> = flat_k_slice.iter().map(|v| v / s).collect();
 
+    // Precompute pseudo-inverse matrix P = (A^T * A)^-1 * A^T
+    // A has shape (kernel_size*kernel_size, 6)
+    let num_pixels = kernel_size * kernel_size;
+    let mut mat_a: faer::Mat<f32> = faer::Mat::ones(num_pixels, 6);
+    let mut count = 0;
+    for r in 0..kernel_size {
+        for c in 0..kernel_size {
+            let x = c as f32 - half_size_patch as f32;
+            let y = r as f32 - half_size_patch as f32;
+            mat_a[(count, 0)] = x * x;
+            mat_a[(count, 1)] = x * y;
+            mat_a[(count, 2)] = y * y;
+            mat_a[(count, 3)] = x;
+            mat_a[(count, 4)] = y;
+            count += 1;
+        }
+    }
+
+    // Compute P = (A^T * A)^-1 * A^T
+    // We can use QR decomposition to solve for P.
+    // A * P_inv = I  -> P_inv? No.
+    // We want params = P * b.
+    // A * params = b.
+    // params = (A^T A)^-1 A^T b.
+    // Let P = (A^T A)^-1 A^T.
+    // P is 6 x num_pixels.
+
+    // Using faer to compute P.
+    // P = (A.qr().solve(I))? No, A is tall.
+    // A = Q R.
+    // A^T A = R^T Q^T Q R = R^T R.
+    // (A^T A)^-1 = (R^T R)^-1 = R^-1 (R^T)^-1.
+    // A^T = R^T Q^T.
+    // P = R^-1 (R^T)^-1 R^T Q^T = R^-1 Q^T.
+    // So P = R^-1 * Q^T.
+
+    let qr = mat_a.qr();
+    // Q is m x m, R is m x n (with zeros at bottom).
+    // faer QR returns a structure that can solve least squares.
+    // We want to compute P such that P * b gives the solution.
+    // We can solve A * X = I_m (identity of size m).
+    // Then X would be... wait.
+    // If we solve A * x_i = e_i for each basis vector e_i of b space?
+    // Then the matrix [x_1 ... x_m] is exactly P.
+    // Yes.
+
+    let mut p_mat: faer::Mat<f32> = faer::Mat::zeros(6, num_pixels);
+    let mut rhs: faer::Mat<f32> = faer::Mat::zeros(num_pixels, 1);
+
+    for i in 0..num_pixels {
+        rhs.fill(0.0);
+        rhs[(i, 0)] = 1.0;
+        qr.solve_lstsq_in_place_with_conj(faer::Conj::No, rhs.as_mut());
+        for j in 0..6 {
+            p_mat[(j, i)] = rhs[(j, 0)];
+        }
+    }
+
     let (width, height) = (image_input.width() as i32, image_input.height() as i32);
     let half_size_patch2 = half_size_patch * 2;
+    let patch_size: usize = 4 * half_size_patch as usize + 1;
+
+    // Reusable buffers
+    let mut smooth_sub_image = vec![0.0f32; num_pixels];
 
     // iter all corner
     for &(initial_x, initial_y) in initial_corners {
@@ -233,7 +299,6 @@ where
         }
 
         // patch
-        let patch_size: usize = 4 * half_size_patch as usize + 1;
         let patch = image_input.view(
             (round_x - half_size_patch2) as u32,
             (round_y - half_size_patch2) as u32,
@@ -241,51 +306,42 @@ where
             (patch_size) as u32,
         );
 
-        let mut smooth_sub_image: faer::Mat<f32> = faer::Mat::zeros(kernel_size, kernel_size);
+        // Convolution
+        // Optimize: avoid allocation in loop
         for r in 0..kernel_size {
             for c in 0..kernel_size {
-                let sub_patch_vec: Vec<f32> = patch
-                    .view(c as u32, r as u32, kernel_size as u32, kernel_size as u32)
-                    .pixels()
-                    .map(|(_, _, v)| v.0[0].into())
-                    .collect();
-                let conv_p = sub_patch_vec
-                    .iter()
-                    .zip(&flat_k)
-                    .fold(0.0_f32, |acc, (k, p)| acc + k * p);
-                smooth_sub_image[(r, c)] = conv_p;
+                // Manual dot product to avoid allocation
+                let mut conv_p = 0.0;
+                let mut k_idx = 0;
+                for pr in 0..kernel_size {
+                    for pc in 0..kernel_size {
+                        let pixel_val: f32 =
+                            patch.get_pixel((c + pc) as u32, (r + pr) as u32).0[0].into();
+                        conv_p += pixel_val * flat_k[k_idx];
+                        k_idx += 1;
+                    }
+                }
+                smooth_sub_image[r * kernel_size + c] = conv_p;
             }
         }
 
-        // a_1*x^2 + a_2*x*y + a_3*y^2 + a_4*x + a_5*y + a_6 = f
-        let mut mat_a: faer::Mat<f32> = faer::Mat::ones(kernel_size * kernel_size, 6);
-        let mut mat_b: faer::Mat<f32> = faer::Mat::zeros(kernel_size * kernel_size, 1);
-        let mut count = 0;
-        for r in 0..kernel_size {
-            for c in 0..kernel_size {
-                let x = c as f32 - half_size_patch as f32;
-                let y = r as f32 - half_size_patch as f32;
-                let f = smooth_sub_image[(r, c)];
-                mat_a[(count, 0)] = x * x;
-                mat_a[(count, 1)] = x * y;
-                mat_a[(count, 2)] = y * y;
-                mat_a[(count, 3)] = x;
-                mat_a[(count, 4)] = y;
-                mat_b[(count, 0)] = f;
-                count += 1;
+        // Compute params using precomputed P
+        // params = P * smooth_sub_image
+        let mut params = [0.0f32; 6];
+        for j in 0..6 {
+            let mut sum = 0.0;
+            for i in 0..num_pixels {
+                sum += p_mat[(j, i)] * smooth_sub_image[i];
             }
+            params[j] = sum;
         }
-        let mut params = mat_b;
-        mat_a
-            .qr()
-            .solve_lstsq_in_place_with_conj(faer::Conj::No, params.as_mut());
 
-        let a1 = params[(0, 0)];
-        let a2 = params[(1, 0)];
-        let a3 = params[(2, 0)];
-        let a4 = params[(3, 0)];
-        let a5 = params[(4, 0)];
-        // let a6 = params[(5, 0)];
+        let a1 = params[0];
+        let a2 = params[1];
+        let a3 = params[2];
+        let a4 = params[3];
+        let a5 = params[4];
+        // let a6 = params[5];
         let fxx = 2.0 * a1;
         let fyy = 2.0 * a3;
         let fxy = a2;
@@ -304,7 +360,7 @@ where
                 let c4 = (a1 - a3) / 2.0;
                 let c3 = a2 / 2.0;
                 let k = (c4 * c4 + c3 * c3).sqrt();
-                let phi = (-1.0 * c5 / k).acos() / 2.0 / PI * 180.0;
+                let phi = (-c5 / k).acos() / 2.0 / PI * 180.0;
 
                 let theta = c3.atan2(c4) / 2.0 / PI * 180.0;
 

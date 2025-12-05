@@ -1,4 +1,4 @@
-use crate::saddle::{is_valid_quad, Saddle};
+use crate::saddle::{Saddle, is_valid_quad};
 use glam;
 use kiddo::{KdTree, SquaredEuclidean};
 use std::{
