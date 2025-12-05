@@ -172,10 +172,14 @@ fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u
     let mut clusters = Vec::new();
     for r in 1..h_mat.height() - 1 {
         for c in 1..h_mat.width() - 1 {
-            let mut cluster = Vec::new();
-            image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
-            if !cluster.is_empty() {
-                clusters.push(cluster);
+            // Check if pixel is candidate before allocating vector
+            let v = unsafe { tmp_h_mat.unsafe_get_pixel(c, r).0[0] };
+            if v < threshold {
+                let mut cluster = Vec::new();
+                image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
+                if !cluster.is_empty() {
+                    clusters.push(cluster);
+                }
             }
         }
     }

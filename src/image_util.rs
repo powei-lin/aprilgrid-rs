@@ -106,17 +106,25 @@ pub fn pixel_bfs(
     y: u32,
     threshold: f32,
 ) {
-    if x < mat.width() && y < mat.height() {
-        let v = unsafe { mat.unsafe_get_pixel(x, y).0[0] };
+    let mut stack = vec![(x, y)];
+    while let Some((cx, cy)) = stack.pop() {
+        if cx >= mat.width() || cy >= mat.height() {
+            continue;
+        }
+        let v = unsafe { mat.unsafe_get_pixel(cx, cy).0[0] };
         if v < threshold {
-            cluster.push((x, y));
+            cluster.push((cx, cy));
             unsafe {
-                mat.unsafe_put_pixel(x, y, [f32::MAX].into());
+                mat.unsafe_put_pixel(cx, cy, [f32::MAX].into());
             }
-            pixel_bfs(mat, cluster, x - 1, y, threshold);
-            pixel_bfs(mat, cluster, x + 1, y, threshold);
-            pixel_bfs(mat, cluster, x, y + 1, threshold);
-            pixel_bfs(mat, cluster, x, y + 1, threshold);
+            if cx > 0 {
+                stack.push((cx - 1, cy));
+            }
+            stack.push((cx + 1, cy));
+            if cy > 0 {
+                stack.push((cx, cy - 1));
+            }
+            stack.push((cx, cy + 1));
         }
     }
 }
