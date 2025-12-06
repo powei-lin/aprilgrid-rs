@@ -1,5 +1,4 @@
 use faer::linalg::solvers::SolveLstsqCore;
-use image::{GenericImage, GenericImageView};
 pub type GrayImagef32 = image::ImageBuffer<image::Luma<f32>, Vec<f32>>;
 
 pub fn tag_homography(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::Mat<f32> {
@@ -70,29 +69,41 @@ pub fn tag_affine(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::M
 }
 
 pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
+    let width = img.width() as usize;
+    let height = img.height() as usize;
     let mut out = GrayImagef32::new(img.width(), img.height());
-    for r in 1..(img.height() - 1) {
-        for c in 1..(img.width() - 1) {
-            let (v11, v12, v13, v21, v22, v23, v31, v32, v33) = unsafe {
-                (
-                    img.unsafe_get_pixel(c - 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c, r - 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c - 1, r).0[0],
-                    img.unsafe_get_pixel(c, r).0[0],
-                    img.unsafe_get_pixel(c + 1, r).0[0],
-                    img.unsafe_get_pixel(c - 1, r + 1).0[0],
-                    img.unsafe_get_pixel(c, r + 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r + 1).0[0],
-                )
-            };
-            let lxx = v21 - 2.0 * v22 + v23;
-            let lyy = v12 - 2.0 * v22 + v32;
-            let lxy = (v13 - v11 + v31 - v33) / 4.0;
 
-            /* normalize and write out */
+    // Safety: GrayImagef32 is backed by a Vec<f32> in row-major order.
+    let in_ptr = img.as_raw().as_ptr();
+    let out_ptr = out.as_mut_ptr();
+
+    for r in 1..(height - 1) {
+        let r_idx = r * width;
+        let prev_row = unsafe { in_ptr.add(r_idx - width) };
+        let curr_row = unsafe { in_ptr.add(r_idx) };
+        let next_row = unsafe { in_ptr.add(r_idx + width) };
+        let out_row = unsafe { out_ptr.add(r_idx) };
+
+        for c in 1..(width - 1) {
             unsafe {
-                out.unsafe_put_pixel(c, r, [(lxx * lyy - lxy * lxy)].into());
+                let v11 = *prev_row.add(c - 1);
+                let v12 = *prev_row.add(c);
+                let v13 = *prev_row.add(c + 1);
+
+                let v21 = *curr_row.add(c - 1);
+                let v22 = *curr_row.add(c);
+                let v23 = *curr_row.add(c + 1);
+
+                let v31 = *next_row.add(c - 1);
+                let v32 = *next_row.add(c);
+                let v33 = *next_row.add(c + 1);
+
+                let lxx = v21 - 2.0 * v22 + v23;
+                let lyy = v12 - 2.0 * v22 + v32;
+                let lxy = (v13 - v11 + v31 - v33) / 4.0;
+
+                /* normalize and write out */
+                *out_row.add(c) = lxx * lyy - lxy * lxy;
             }
         }
     }
@@ -106,16 +117,23 @@ pub fn pixel_bfs(
     y: u32,
     threshold: f32,
 ) {
+    let width = mat.width();
+    let height = mat.height();
+    // Use raw pointer for faster access
+    let ptr = mat.as_mut_ptr();
+    let stride = width as usize;
+
     let mut stack = vec![(x, y)];
     while let Some((cx, cy)) = stack.pop() {
-        if cx >= mat.width() || cy >= mat.height() {
+        if cx >= width || cy >= height {
             continue;
         }
-        let v = unsafe { mat.unsafe_get_pixel(cx, cy).0[0] };
+        let idx = cy as usize * stride + cx as usize;
+        let v = unsafe { *ptr.add(idx) };
         if v < threshold {
             cluster.push((cx, cy));
             unsafe {
-                mat.unsafe_put_pixel(cx, cy, [f32::MAX].into());
+                *ptr.add(idx) = f32::MAX;
             }
             if cx > 0 {
                 stack.push((cx - 1, cy));

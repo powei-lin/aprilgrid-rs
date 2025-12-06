@@ -4,13 +4,24 @@ use image::ImageReader;
 
 fn main() -> eyre::Result<()> {
     let bench = Bench::from_args()?;
-    bench.register("detection", bench_detection, [()]);
+    bench.register(
+        "detection",
+        bench_detection,
+        [
+            "tests/data/iphone.png",
+            "tests/data/EuRoC.png",
+            "tests/data/TUM_VI.png",
+            "tests/data/right.png",
+            "tests/data/r45.png",
+            "tests/data/top.png",
+            "tests/data/two_boards.png",
+        ],
+    );
     bench.run()?;
     Ok(())
 }
 
-fn bench_detection(bencher: Bencher, _: ()) {
-    let img_path = "tests/data/iphone.png";
+fn bench_detection(bencher: Bencher, img_path: &str) {
     let img = ImageReader::open(img_path)
         .expect("Failed to open image")
         .decode()

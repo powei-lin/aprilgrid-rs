@@ -9,7 +9,7 @@ use crate::image_util::GrayImagef32;
 use crate::saddle::Saddle;
 use crate::{image_util, math_util, tag_families};
 use faer::linalg::solvers::SolveLstsqCore;
-use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
+use image::{DynamicImage, GrayImage, ImageBuffer, Luma};
 use itertools::Itertools;
 use kiddo::{KdTree, SquaredEuclidean};
 
@@ -76,14 +76,20 @@ pub fn bit_code(
     valid_brightness_threshold: u8,
     max_invalid_bit: u32,
 ) -> Option<u64> {
+    let width = img.width();
+    let height = img.height();
+    let ptr = img.as_raw().as_ptr();
+    let stride = width as usize;
+
     let brightness_vec: Vec<u8> = decode_pts
         .iter()
         .filter_map(|(x, y)| {
             let (x, y) = (x.round() as u32, y.round() as u32);
-            if x >= img.width() || y >= img.height() {
+            if x >= width || y >= height {
                 None
             } else {
-                Some(img.get_pixel(x, y).0[0])
+                // Some(img.get_pixel(x, y).0[0])
+                unsafe { Some(*ptr.add(y as usize * stride + x as usize)) }
             }
         })
         .collect();
@@ -170,10 +176,17 @@ pub fn best_tag(bits: u64, thres: u8, tag_family: &[u64], edge_bits: u8) -> Opti
 fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u32)>> {
     let mut tmp_h_mat = h_mat.clone();
     let mut clusters = Vec::new();
-    for r in 1..h_mat.height() - 1 {
-        for c in 1..h_mat.width() - 1 {
+    let width = tmp_h_mat.width();
+    let height = tmp_h_mat.height();
+    let stride = width as usize;
+    let ptr = tmp_h_mat.as_mut_ptr();
+
+    for r in 1..height - 1 {
+        let row_start = r as usize * stride;
+        for c in 1..width - 1 {
             // Check if pixel is candidate before allocating vector
-            let v = unsafe { tmp_h_mat.unsafe_get_pixel(c, r).0[0] };
+            let idx = row_start + c as usize;
+            let v = unsafe { *ptr.add(idx) };
             if v < threshold {
                 let mut cluster = Vec::new();
                 image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
@@ -281,7 +294,7 @@ where
 
     let (width, height) = (image_input.width() as i32, image_input.height() as i32);
     let half_size_patch2 = half_size_patch * 2;
-    let patch_size: usize = 4 * half_size_patch as usize + 1;
+    // let patch_size: usize = 4 * half_size_patch as usize + 1;
 
     // Reusable buffers
     let mut smooth_sub_image = vec![0.0f32; num_pixels];
@@ -299,24 +312,35 @@ where
         }
 
         // patch
-        let patch = image_input.view(
-            (round_x - half_size_patch2) as u32,
-            (round_y - half_size_patch2) as u32,
-            (patch_size) as u32,
-            (patch_size) as u32,
-        );
+        // Removed SubImage view creation to use raw pointers directly for performance
+        let base_x = (round_x - half_size_patch2) as usize;
+        let base_y = (round_y - half_size_patch2) as usize;
+        let stride = width as usize;
+        let raw_ptr = image_input.as_raw().as_ptr();
 
-        // Convolution
         // Optimize: avoid allocation in loop
         for r in 0..kernel_size {
             for c in 0..kernel_size {
                 // Manual dot product to avoid allocation
                 let mut conv_p = 0.0;
                 let mut k_idx = 0;
+
+                // Pre-calculate the starting pointer for the top-left of the convolution window for this (r, c)
+                // The pixel at patch relative (c, r) corresponds to image (base_x + c, base_y + r)
+                // But the convolution iterates pr, pc addition.
+                // We want pixel at (base_x + c + pc, base_y + r + pr)
+
                 for pr in 0..kernel_size {
+                    // Pointer to the row in the image
+                    // row_idx = (base_y + r + pr) * stride
+                    // col_idx = base_x + c + pc
+                    let row_idx = (base_y + r + pr) * stride;
+                    // We can optimize this by hoisting row calculation if needed,
+                    // but simple raw access is already much faster than safe get_pixel.
+
                     for pc in 0..kernel_size {
-                        let pixel_val: f32 =
-                            patch.get_pixel((c + pc) as u32, (r + pr) as u32).0[0].into();
+                        let idx = row_idx + (base_x + c + pc);
+                        let pixel_val: f32 = unsafe { (*raw_ptr.add(idx)).into() };
                         conv_p += pixel_val * flat_k[k_idx];
                         k_idx += 1;
                     }
