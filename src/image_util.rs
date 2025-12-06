@@ -132,7 +132,7 @@ pub fn pixel_bfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{ImageBuffer, Luma};
+    use image::Luma;
 
     #[test]
     fn test_tag_homography() {
