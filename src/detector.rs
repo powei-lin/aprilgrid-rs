@@ -204,6 +204,8 @@ pub struct Tag {
     pub p: [(f32, f32); 4],
 }
 
+// use rayon::prelude::*; // Removed
+
 pub fn rochade_refine<T>(
     image_input: &ImageBuffer<Luma<T>, Vec<T>>,
     initial_corners: &Vec<(f32, f32)>,
@@ -213,7 +215,7 @@ where
     T: image::Primitive + Into<f32>,
 {
     const PIXEL_MOVE_THRESHOLD: f32 = 1.0;
-    let mut refined_corners = Vec::<Saddle>::new();
+
     // kernel
     let kernel_size = (half_size_patch * 2 + 1) as usize;
     let gamma = half_size_patch as f32;
@@ -235,7 +237,7 @@ where
     let flat_k: Vec<f32> = flat_k_slice.iter().map(|v| v / s).collect();
 
     // Precompute pseudo-inverse matrix P = (A^T * A)^-1 * A^T
-    // A has shape (kernel_size*kernel_size, 6)
+    // ... (unchanged precomputation code logic, just kept outside loop) ...
     let num_pixels = kernel_size * kernel_size;
     let mut mat_a: faer::Mat<f32> = faer::Mat::ones(num_pixels, 6);
     let mut count = 0;
@@ -252,34 +254,7 @@ where
         }
     }
 
-    // Compute P = (A^T * A)^-1 * A^T
-    // We can use QR decomposition to solve for P.
-    // A * P_inv = I  -> P_inv? No.
-    // We want params = P * b.
-    // A * params = b.
-    // params = (A^T A)^-1 A^T b.
-    // Let P = (A^T A)^-1 A^T.
-    // P is 6 x num_pixels.
-
-    // Using faer to compute P.
-    // P = (A.qr().solve(I))? No, A is tall.
-    // A = Q R.
-    // A^T A = R^T Q^T Q R = R^T R.
-    // (A^T A)^-1 = (R^T R)^-1 = R^-1 (R^T)^-1.
-    // A^T = R^T Q^T.
-    // P = R^-1 (R^T)^-1 R^T Q^T = R^-1 Q^T.
-    // So P = R^-1 * Q^T.
-
     let qr = mat_a.qr();
-    // Q is m x m, R is m x n (with zeros at bottom).
-    // faer QR returns a structure that can solve least squares.
-    // We want to compute P such that P * b gives the solution.
-    // We can solve A * X = I_m (identity of size m).
-    // Then X would be... wait.
-    // If we solve A * x_i = e_i for each basis vector e_i of b space?
-    // Then the matrix [x_1 ... x_m] is exactly P.
-    // Yes.
-
     let mut p_mat: faer::Mat<f32> = faer::Mat::zeros(6, num_pixels);
     let mut rhs: faer::Mat<f32> = faer::Mat::zeros(num_pixels, 1);
 
@@ -296,113 +271,102 @@ where
     let half_size_patch2 = half_size_patch * 2;
     // let patch_size: usize = 4 * half_size_patch as usize + 1;
 
-    // Reusable buffers
-    let mut smooth_sub_image = vec![0.0f32; num_pixels];
+    let stride = width as usize;
+    let raw_ptr = image_input.as_raw().as_ptr();
 
-    // iter all corner
-    for &(initial_x, initial_y) in initial_corners {
-        let round_x = initial_x.round() as i32;
-        let round_y = initial_y.round() as i32;
-        if (round_y - half_size_patch2) < 0
-            || (round_y + half_size_patch2 >= height)
-            || (round_x - half_size_patch2 < 0)
-            || (round_x + half_size_patch2 >= width)
-        {
-            continue;
-        }
+    initial_corners
+        .iter()
+        .filter_map(|&(initial_x, initial_y)| {
+            let round_x = initial_x.round() as i32;
+            let round_y = initial_y.round() as i32;
+            if (round_y - half_size_patch2) < 0
+                || (round_y + half_size_patch2 >= height)
+                || (round_x - half_size_patch2 < 0)
+                || (round_x + half_size_patch2 >= width)
+            {
+                return None;
+            }
 
-        // patch
-        // Removed SubImage view creation to use raw pointers directly for performance
-        let base_x = (round_x - half_size_patch2) as usize;
-        let base_y = (round_y - half_size_patch2) as usize;
-        let stride = width as usize;
-        let raw_ptr = image_input.as_raw().as_ptr();
+            // Local buffer for this thread
+            // Avoid allocation
+            let mut buffer = [0.0f32; 256];
+            if num_pixels > 256 {
+                return None;
+            }
+            let smooth_sub_image = &mut buffer[..num_pixels];
+            // let mut smooth_sub_image = vec![0.0f32; num_pixels]; // legacy
 
-        // Optimize: avoid allocation in loop
-        for r in 0..kernel_size {
-            for c in 0..kernel_size {
-                // Manual dot product to avoid allocation
-                let mut conv_p = 0.0;
-                let mut k_idx = 0;
+            let base_x = (round_x - half_size_patch2) as usize;
+            let base_y = (round_y - half_size_patch2) as usize;
 
-                // Pre-calculate the starting pointer for the top-left of the convolution window for this (r, c)
-                // The pixel at patch relative (c, r) corresponds to image (base_x + c, base_y + r)
-                // But the convolution iterates pr, pc addition.
-                // We want pixel at (base_x + c + pc, base_y + r + pr)
+            // Convolution
+            for r in 0..kernel_size {
+                for c in 0..kernel_size {
+                    let mut conv_p = 0.0;
+                    let mut k_idx = 0;
 
-                for pr in 0..kernel_size {
-                    // Pointer to the row in the image
-                    // row_idx = (base_y + r + pr) * stride
-                    // col_idx = base_x + c + pc
-                    let row_idx = (base_y + r + pr) * stride;
-                    // We can optimize this by hoisting row calculation if needed,
-                    // but simple raw access is already much faster than safe get_pixel.
+                    for pr in 0..kernel_size {
+                        let row_idx = (base_y + r + pr) * stride;
+                        for pc in 0..kernel_size {
+                            let idx = row_idx + (base_x + c + pc);
+                            let pixel_val: f32 = unsafe { (*raw_ptr.add(idx)).into() };
+                            conv_p += pixel_val * flat_k[k_idx];
+                            k_idx += 1;
+                        }
+                    }
+                    smooth_sub_image[r * kernel_size + c] = conv_p;
+                }
+            }
 
-                    for pc in 0..kernel_size {
-                        let idx = row_idx + (base_x + c + pc);
-                        let pixel_val: f32 = unsafe { (*raw_ptr.add(idx)).into() };
-                        conv_p += pixel_val * flat_k[k_idx];
-                        k_idx += 1;
+            // Compute params using precomputed P
+            let mut params = [0.0f32; 6];
+            for j in 0..6 {
+                let mut sum = 0.0;
+                for i in 0..num_pixels {
+                    sum += p_mat[(j, i)] * smooth_sub_image[i];
+                }
+                params[j] = sum;
+            }
+
+            let a1 = params[0];
+            let a2 = params[1];
+            let a3 = params[2];
+            let a4 = params[3];
+            let a5 = params[4];
+
+            let fxx = 2.0 * a1;
+            let fyy = 2.0 * a3;
+            let fxy = a2;
+            let d = fxx * fyy - fxy * fxy;
+
+            if d < 0.0 {
+                let (x0, y0) = math_util::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
+                if x0.abs() > PIXEL_MOVE_THRESHOLD || y0.abs() > PIXEL_MOVE_THRESHOLD {
+                    None
+                } else {
+                    let c5 = (a1 + a3) / 2.0;
+                    let c4 = (a1 - a3) / 2.0;
+                    let c3 = a2 / 2.0;
+                    let k = (c4 * c4 + c3 * c3).sqrt();
+                    let phi = (-c5 / k).acos() / 2.0 / PI * 180.0;
+                    let theta = c3.atan2(c4) / 2.0 / PI * 180.0;
+
+                    if c5.abs() >= k {
+                        None
+                    } else {
+                        Some(Saddle {
+                            p: (initial_x.round() + x0, initial_y.round() + y0),
+                            k,
+                            theta,
+                            phi,
+                        })
                     }
                 }
-                smooth_sub_image[r * kernel_size + c] = conv_p;
-            }
-        }
-
-        // Compute params using precomputed P
-        // params = P * smooth_sub_image
-        let mut params = [0.0f32; 6];
-        for j in 0..6 {
-            let mut sum = 0.0;
-            for i in 0..num_pixels {
-                sum += p_mat[(j, i)] * smooth_sub_image[i];
-            }
-            params[j] = sum;
-        }
-
-        let a1 = params[0];
-        let a2 = params[1];
-        let a3 = params[2];
-        let a4 = params[3];
-        let a5 = params[4];
-        // let a6 = params[5];
-        let fxx = 2.0 * a1;
-        let fyy = 2.0 * a3;
-        let fxy = a2;
-        let d = fxx * fyy - fxy * fxy;
-
-        // is saddle point
-        if d < 0.0 {
-            let (x0, y0) = math_util::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
-            // move too much
-            if x0.abs() > PIXEL_MOVE_THRESHOLD || y0.abs() > PIXEL_MOVE_THRESHOLD {
-                continue;
             } else {
-                // Alturki, Abdulrahman S., and John S. Loomis.
-                // "A new X-Corner Detection for Camera Calibration Using Saddle Points."
-                let c5 = (a1 + a3) / 2.0;
-                let c4 = (a1 - a3) / 2.0;
-                let c3 = a2 / 2.0;
-                let k = (c4 * c4 + c3 * c3).sqrt();
-                let phi = (-c5 / k).acos() / 2.0 / PI * 180.0;
-
-                let theta = c3.atan2(c4) / 2.0 / PI * 180.0;
-
-                if c5.abs() >= k {
-                    continue;
-                }
-                refined_corners.push(Saddle {
-                    p: (initial_x.round() + x0, initial_y.round() + y0),
-                    k,
-                    theta,
-                    phi,
-                });
+                None
             }
-        } else {
-            continue;
-        }
-    }
-    refined_corners
+        })
+        .collect()
 }
 
 impl TagDetector {
@@ -451,7 +415,10 @@ impl TagDetector {
     }
 
     pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
-        let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
+        // compute the greyscale image
+        // let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
+        let img_f32 = img.to_luma32f();
+        let blur = image_util::gaussian_blur_par(&img_f32, 1.5);
         let hessian_response_mat = image_util::hessian_response(&blur);
         let min_response = hessian_response_mat
             .to_vec()

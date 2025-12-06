@@ -68,45 +68,71 @@ pub fn tag_affine(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::M
     faer::mat![[h[0], h[1], h[2]], [h[3], h[4], h[5]], [0.0, 0.0, 1.0],]
 }
 
+use rayon::prelude::*;
+
 pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
     let width = img.width() as usize;
     let height = img.height() as usize;
     let mut out = GrayImagef32::new(img.width(), img.height());
 
     // Safety: GrayImagef32 is backed by a Vec<f32> in row-major order.
-    let in_ptr = img.as_raw().as_ptr();
-    let out_ptr = out.as_mut_ptr();
+    let in_ptr = img.as_raw().as_ptr() as usize; // Cast to usize to be Copy + Send
+    // let out_slice = out.as_raw_mut(); // Error: no as_raw_mut
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr(), width * height) };
 
-    for r in 1..(height - 1) {
-        let r_idx = r * width;
-        let prev_row = unsafe { in_ptr.add(r_idx - width) };
-        let curr_row = unsafe { in_ptr.add(r_idx) };
-        let next_row = unsafe { in_ptr.add(r_idx + width) };
-        let out_row = unsafe { out_ptr.add(r_idx) };
+    // Chunking: Process 16 rows per task to reduce overhead.
+    let rows_per_chunk = 16;
+    let chunk_size = width * rows_per_chunk;
 
-        for c in 1..(width - 1) {
-            unsafe {
-                let v11 = *prev_row.add(c - 1);
-                let v12 = *prev_row.add(c);
-                let v13 = *prev_row.add(c + 1);
+    out_slice
+        .par_chunks_mut(chunk_size)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk)| {
+            // Reconstruct pointer locally safely
+            let in_ptr = in_ptr as *const f32;
 
-                let v21 = *curr_row.add(c - 1);
-                let v22 = *curr_row.add(c);
-                let v23 = *curr_row.add(c + 1);
+            // Iterate over rows within this chunk
+            for (local_r, out_row) in chunk.chunks_exact_mut(width).enumerate() {
+                let r = chunk_idx * rows_per_chunk + local_r;
 
-                let v31 = *next_row.add(c - 1);
-                let v32 = *next_row.add(c);
-                let v33 = *next_row.add(c + 1);
+                // Skip border rows
+                if r == 0 || r >= height - 1 {
+                    continue;
+                }
 
-                let lxx = v21 - 2.0 * v22 + v23;
-                let lyy = v12 - 2.0 * v22 + v32;
-                let lxy = (v13 - v11 + v31 - v33) / 4.0;
+                let r_idx = r * width;
 
-                /* normalize and write out */
-                *out_row.add(c) = lxx * lyy - lxy * lxy;
+                // Safety: We are reading from immutable `img` which is alive.
+                // Pointers are within bounds because r is 1..height-1.
+                let prev_row = unsafe { in_ptr.add(r_idx - width) };
+                let curr_row = unsafe { in_ptr.add(r_idx) };
+                let next_row = unsafe { in_ptr.add(r_idx + width) };
+
+                for c in 1..(width - 1) {
+                    unsafe {
+                        let v11 = *prev_row.add(c - 1);
+                        let v12 = *prev_row.add(c);
+                        let v13 = *prev_row.add(c + 1);
+
+                        let v21 = *curr_row.add(c - 1);
+                        let v22 = *curr_row.add(c);
+                        let v23 = *curr_row.add(c + 1);
+
+                        let v31 = *next_row.add(c - 1);
+                        let v32 = *next_row.add(c);
+                        let v33 = *next_row.add(c + 1);
+
+                        let lxx = v21 - 2.0 * v22 + v23;
+                        let lyy = v12 - 2.0 * v22 + v32;
+                        let lxy = (v13 - v11 + v31 - v33) / 4.0;
+
+                        /* normalize and write out */
+                        out_row[c] = lxx * lyy - lxy * lxy;
+                    }
+                }
             }
-        }
-    }
+        });
+
     out
 }
 
@@ -145,6 +171,97 @@ pub fn pixel_bfs(
             stack.push((cx, cy + 1));
         }
     }
+}
+
+pub fn gaussian_blur_par(img: &GrayImagef32, sigma: f32) -> GrayImagef32 {
+    let width = img.width() as usize;
+    let height = img.height() as usize;
+
+    // Create kernel
+    let radius = (2.0 * sigma).ceil() as isize;
+    let kernel_len = (2 * radius + 1) as usize;
+    let mut kernel = Vec::with_capacity(kernel_len);
+    let sigma2 = 2.0 * sigma * sigma;
+    let mut sum = 0.0;
+
+    for i in -radius..=radius {
+        let v = (-(i * i) as f32 / sigma2).exp();
+        kernel.push(v);
+        sum += v;
+    }
+    for v in &mut kernel {
+        *v /= sum;
+    }
+
+    // Horizontal pass
+    let mut temp = vec![0.0f32; width * height];
+    let in_raw = img.as_raw();
+    let in_ptr = in_raw.as_ptr() as usize;
+
+    // Process 32 rows per task
+    let rows_per_chunk = 32;
+    let chunk_size = width * rows_per_chunk;
+    let temp_slice = temp.as_mut_slice();
+
+    temp_slice
+        .par_chunks_mut(chunk_size)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk)| {
+            let in_ptr = in_ptr as *const f32;
+
+            for (local_y, row) in chunk.chunks_exact_mut(width).enumerate() {
+                let y = chunk_idx * rows_per_chunk + local_y;
+                if y >= height {
+                    continue;
+                }
+
+                let row_start = y * width;
+                for (x, out_val) in row.iter_mut().enumerate() {
+                    let mut acc = 0.0;
+                    for k in 0..kernel_len {
+                        let offset = k as isize - radius;
+                        let sample_x = (x as isize + offset).clamp(0, width as isize - 1) as usize;
+                        unsafe {
+                            acc += *in_ptr.add(row_start + sample_x) * kernel[k];
+                        }
+                    }
+                    *out_val = acc;
+                }
+            }
+        });
+
+    // Vertical pass
+    let mut out = GrayImagef32::new(img.width(), img.height());
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr(), width * height) };
+    let temp_ptr = temp.as_ptr() as usize;
+
+    out_slice
+        .par_chunks_mut(chunk_size)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk)| {
+            let temp_ptr = temp_ptr as *const f32;
+
+            for (local_y, row) in chunk.chunks_exact_mut(width).enumerate() {
+                let y = chunk_idx * rows_per_chunk + local_y;
+                if y >= height {
+                    continue;
+                }
+
+                for (x, out_val) in row.iter_mut().enumerate() {
+                    let mut acc = 0.0;
+                    for k in 0..kernel_len {
+                        let offset = k as isize - radius;
+                        let sample_y = (y as isize + offset).clamp(0, height as isize - 1) as usize;
+                        unsafe {
+                            acc += *temp_ptr.add(sample_y * width + x) * kernel[k];
+                        }
+                    }
+                    *out_val = acc;
+                }
+            }
+        });
+
+    out
 }
 
 #[cfg(test)]
