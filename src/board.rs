@@ -2,7 +2,7 @@ use crate::saddle::{Saddle, is_valid_quad};
 use glam;
 use kdtree::KdTree;
 use kdtree::distance::squared_euclidean;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 struct BoardIdx {
@@ -15,26 +15,25 @@ impl BoardIdx {
     }
 }
 
-pub struct Board<'a> {
+pub struct Board<'a, 'b> {
     refined: &'a [Saddle],
-    active_idxs: HashSet<usize>,
+    active_idxs: Vec<bool>,
     found_board_idxs: HashMap<BoardIdx, Option<[usize; 4]>>,
-    tree: KdTree<f32, usize, [f32; 2]>,
+    tree: &'b KdTree<f32, usize, [f32; 2]>,
     spacing_ratio: f32,
     pub score: u32,
 }
-impl<'a> Board<'a> {
+impl<'a, 'b> Board<'a, 'b> {
     pub fn new(
         refined: &'a [Saddle],
-        active_idxs: &HashSet<usize>,
+        active_mask: &Vec<bool>,
         quad_idxs: &[usize; 4],
         spacing_ratio: f32,
-        tree: &KdTree<f32, usize, [f32; 2]>,
-    ) -> Board<'a> {
-        let mut active_idxs = active_idxs.clone();
-        let tree = tree.clone();
+        tree: &'b KdTree<f32, usize, [f32; 2]>,
+    ) -> Board<'a, 'b> {
+        let mut active_idxs = active_mask.clone();
         for i in &quad_idxs[1..] {
-            active_idxs.remove(i);
+            active_idxs[*i] = false;
         }
         let mut b = Board {
             refined,
@@ -139,7 +138,7 @@ impl<'a> Board<'a> {
                     let mut v = valid_new_qs.to_vec();
                     v.rotate_right(i);
                     for vv in &v {
-                        self.active_idxs.remove(vv);
+                        self.active_idxs[*vv] = false;
                     }
                     self.score += 1;
                     self.found_board_idxs
@@ -156,18 +155,18 @@ impl<'a> Board<'a> {
         let s1 = self.refined[quad_idxs[1]];
         let s2 = self.refined[quad_idxs[2]];
         let s3 = self.refined[quad_idxs[3]];
-        let (new_s0s, new_s1s) = self.find_closest_potential_saddle_idxs(&s0, &s1);
-        let (new_s3s, new_s2s) = self.find_closest_potential_saddle_idxs(&s3, &s2);
-        for s0_i in &new_s0s {
-            for s1_i in &new_s1s {
-                for s2_i in &new_s2s {
-                    for s3_i in &new_s3s {
-                        let new_s0 = self.refined[*s0_i];
-                        let new_s1 = self.refined[*s1_i];
-                        let new_s2 = self.refined[*s2_i];
-                        let new_s3 = self.refined[*s3_i];
+        let (new_s0s, n0, new_s1s, n1) = self.find_closest_potential_saddle_idxs(&s0, &s1);
+        let (new_s3s, n3, new_s2s, n2) = self.find_closest_potential_saddle_idxs(&s3, &s2);
+        for i0 in 0..n0 {
+            for i1 in 0..n1 {
+                for i2 in 0..n2 {
+                    for i3 in 0..n3 {
+                        let new_s0 = self.refined[new_s0s[i0]];
+                        let new_s1 = self.refined[new_s1s[i1]];
+                        let new_s2 = self.refined[new_s2s[i2]];
+                        let new_s3 = self.refined[new_s3s[i3]];
                         if is_valid_quad(&new_s0, &new_s1, &new_s2, &new_s3) {
-                            return Some([*s0_i, *s1_i, *s2_i, *s3_i]);
+                            return Some([new_s0s[i0], new_s1s[i1], new_s2s[i2], new_s3s[i3]]);
                         }
                     }
                 }
@@ -179,60 +178,58 @@ impl<'a> Board<'a> {
         &self,
         s0: &Saddle,
         s1: &Saddle,
-    ) -> (Vec<usize>, Vec<usize>) {
+    ) -> ([usize; 3], usize, [usize; 3], usize) {
         let ratio0 = 1.0 + self.spacing_ratio;
-        let ratio1 = 0.5;
+        let radius_sq = 0.5
+            * (glam::Vec2::new(s0.p.0, s0.p.1) - glam::Vec2::new(s1.p.0, s1.p.1)).length_squared();
         let angle_thres = 5.0;
         let v0 = glam::Vec2::new(s0.p.0, s0.p.1);
         let v1 = glam::Vec2::new(s1.p.0, s1.p.1);
         let v10 = v1 - v0;
-        let v10_norm = v10.distance_squared(glam::Vec2::ZERO);
         let new_v0 = v0 + v10 * ratio0;
         let new_v1 = v1 + v10 * ratio0;
 
-        let mut nv0s = self
+        let nv0s = self
             .tree
-            .within(&[new_v0.x, new_v0.y], ratio1 * v10_norm, &squared_euclidean)
+            .nearest(&[new_v0.x, new_v0.y], 3, &squared_euclidean)
             .unwrap();
-        nv0s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-        let new_s0: Vec<usize> = nv0s
-            .iter()
-            .filter_map(|n| {
-                let idx = *n.1;
-                if self.active_idxs.contains(&idx) {
-                    let theta_diff =
-                        crate::math_util::theta_distance_degree(s0.theta, self.refined[idx].theta);
-                    if theta_diff < angle_thres {
-                        return Some(idx);
+        let mut out0 = [0usize; 3];
+        let mut count0 = 0;
+        for &(dist_sq, &idx) in &nv0s {
+            if dist_sq <= radius_sq && self.active_idxs[idx] {
+                let theta_diff =
+                    crate::math_util::theta_distance_degree(s0.theta, self.refined[idx].theta);
+                if theta_diff < angle_thres {
+                    out0[count0] = idx;
+                    count0 += 1;
+                    if count0 == 3 {
+                        break;
                     }
                 }
-                None
-            })
-            .take(3)
-            .collect();
+            }
+        }
 
-        let mut nv1s = self
+        let nv1s = self
             .tree
-            .within(&[new_v1.x, new_v1.y], ratio1 * v10_norm, &squared_euclidean)
+            .nearest(&[new_v1.x, new_v1.y], 3, &squared_euclidean)
             .unwrap();
-        nv1s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-        let new_s1: Vec<usize> = nv1s
-            .iter()
-            .filter_map(|n| {
-                let idx = *n.1;
-                if self.active_idxs.contains(&idx) {
-                    let theta_diff =
-                        crate::math_util::theta_distance_degree(s1.theta, self.refined[idx].theta);
-                    if theta_diff < angle_thres {
-                        return Some(idx);
+        let mut out1 = [0usize; 3];
+        let mut count1 = 0;
+        for &(dist_sq, &idx) in &nv1s {
+            if dist_sq <= radius_sq && self.active_idxs[idx] {
+                let theta_diff =
+                    crate::math_util::theta_distance_degree(s1.theta, self.refined[idx].theta);
+                if theta_diff < angle_thres {
+                    out1[count1] = idx;
+                    count1 += 1;
+                    if count1 == 3 {
+                        break;
                     }
                 }
-                None
-            })
-            .take(3)
-            .collect();
-        (new_s0, new_s1)
+            }
+        }
+        (out0, count0, out1, count1)
     }
 }

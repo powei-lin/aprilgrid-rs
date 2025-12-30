@@ -611,7 +611,7 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
     }
 
     // quad search
-    let active_idxs: HashSet<usize> = (0..refined.len()).collect();
+    let active_mask: Vec<bool> = vec![true; refined.len()];
     let (mut best_score, mut best_board_option) = (0, None);
     let mut count = 0;
     let mut hm = HashMap::<i32, Vec<usize>>::new();
@@ -634,7 +634,7 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
         let s0_idx = s0_idxs.pop().unwrap();
         let quads = init_quads(refined, s0_idx, &tree);
         for q in quads {
-            let board = crate::board::Board::new(refined, &active_idxs, &q, 0.3, &tree);
+            let board = crate::board::Board::new(refined, &active_mask, &q, 0.3, &tree);
             if board.score > best_score {
                 best_score = board.score;
                 best_board_option = Some(board);
