@@ -28,7 +28,7 @@ glam = "0.30.9"
 image = "0.25.9"
 imageproc = "0.25.0"
 itertools = "0.14.0"
-kiddo = "5.0.3"
+kdtree = "0.8.0"
 kornia = { version = "0.1.8", optional = true }
 rand = "0.9.2"
 

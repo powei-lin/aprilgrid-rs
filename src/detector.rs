@@ -11,7 +11,8 @@ use crate::{image_util, math_util, tag_families};
 use faer::linalg::solvers::SolveLstsqCore;
 use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
 use itertools::Itertools;
-use kiddo::{KdTree, SquaredEuclidean};
+use kdtree::KdTree;
+use kdtree::distance::squared_euclidean;
 
 pub struct TagDetector {
     edge: u8,
@@ -261,9 +262,7 @@ where
     // Q is m x m, R is m x n (with zeros at bottom).
     // faer QR returns a structure that can solve least squares.
     // We want to compute P such that P * b gives the solution.
-    // We can solve A * X = I_m (identity of size m).
-    // Then X would be... wait.
-    // If we solve A * x_i = e_i for each basis vector e_i of b space?
+    // We can solve A * x_i = e_i for each basis vector e_i of b space?
     // Then the matrix [x_1 ... x_m] is exactly P.
     // Yes.
 
@@ -557,19 +556,24 @@ impl TagDetector {
     }
 }
 
-pub fn init_quads(refined: &[Saddle], s0_idx: usize, tree: &KdTree<f32, 2>) -> Vec<[usize; 4]> {
+pub fn init_quads(
+    refined: &[Saddle],
+    s0_idx: usize,
+    tree: &KdTree<f32, usize, [f32; 2]>,
+) -> Vec<[usize; 4]> {
     let mut out = Vec::new();
     let s0 = refined[s0_idx];
-    let nearest = tree.nearest_n::<SquaredEuclidean>(&s0.arr(), 50);
+    let nearest = tree.nearest(&s0.arr(), 50, &squared_euclidean).unwrap();
     let mut same_p_idxs = Vec::new();
     let mut diff_p_idxs = Vec::new();
     for n in &nearest[1..] {
-        let s = refined[n.item as usize];
+        let s_idx = *n.1;
+        let s = refined[s_idx];
         let theta_diff = crate::math_util::theta_distance_degree(s0.theta, s.theta);
         if theta_diff < 5.0 {
-            same_p_idxs.push(n.item as usize);
+            same_p_idxs.push(s_idx);
         } else if theta_diff > 80.0 {
-            diff_p_idxs.push(n.item as usize);
+            diff_p_idxs.push(s_idx);
         }
     }
     for s1_idx in same_p_idxs {
@@ -601,9 +605,10 @@ pub fn try_find_best_board(refined: &[Saddle]) -> Option<Vec<[usize; 4]>> {
     if refined.is_empty() {
         return None;
     }
-    let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.into()).collect();
-    // use the kiddo::KdTree type to get up and running quickly with default settings
-    let tree: KdTree<f32, 2> = (&entries).into();
+    let mut tree = KdTree::new(2);
+    for (i, r) in refined.iter().enumerate() {
+        tree.add(r.arr(), i).unwrap();
+    }
 
     // quad search
     let active_idxs: HashSet<usize> = (0..refined.len()).collect();

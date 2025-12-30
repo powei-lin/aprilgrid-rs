@@ -1,10 +1,8 @@
 use crate::saddle::{Saddle, is_valid_quad};
 use glam;
-use kiddo::{KdTree, SquaredEuclidean};
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZero,
-};
+use kdtree::KdTree;
+use kdtree::distance::squared_euclidean;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 struct BoardIdx {
@@ -21,7 +19,7 @@ pub struct Board<'a> {
     refined: &'a [Saddle],
     active_idxs: HashSet<usize>,
     found_board_idxs: HashMap<BoardIdx, Option<[usize; 4]>>,
-    tree: KdTree<f32, 2>,
+    tree: KdTree<f32, usize, [f32; 2]>,
     spacing_ratio: f32,
     pub score: u32,
 }
@@ -31,13 +29,12 @@ impl<'a> Board<'a> {
         active_idxs: &HashSet<usize>,
         quad_idxs: &[usize; 4],
         spacing_ratio: f32,
-        tree: &KdTree<f32, 2>,
+        tree: &KdTree<f32, usize, [f32; 2]>,
     ) -> Board<'a> {
         let mut active_idxs = active_idxs.clone();
-        let mut tree = tree.clone();
+        let tree = tree.clone();
         for i in &quad_idxs[1..] {
             active_idxs.remove(i);
-            tree.remove(&refined[*i].arr(), *i as u64);
         }
         let mut b = Board {
             refined,
@@ -89,8 +86,8 @@ impl<'a> Board<'a> {
                 .map(|i| {
                     let x = (self.refined[q0[i]].p.0 + self.refined[q1[i]].p.0) / 2.0;
                     let y = (self.refined[q0[i]].p.1 + self.refined[q1[i]].p.1) / 2.0;
-                    let n = self.tree.nearest_one::<SquaredEuclidean>(&[x, y]);
-                    n.item as usize
+                    let n = self.tree.nearest(&[x, y], 1, &squared_euclidean).unwrap();
+                    *n[0].1
                 })
                 .collect();
             // println!("try fixing {:?} {:?}", b0, b1);
@@ -192,16 +189,17 @@ impl<'a> Board<'a> {
         let v10_norm = v10.distance_squared(glam::Vec2::ZERO);
         let new_v0 = v0 + v10 * ratio0;
         let new_v1 = v1 + v10 * ratio0;
-        let nv0s = self.tree.nearest_n_within::<SquaredEuclidean>(
-            &[new_v0.x, new_v0.y],
-            ratio1 * v10_norm,
-            NonZero::new(3).unwrap(),
-            true,
-        );
+
+        let mut nv0s = self
+            .tree
+            .within(&[new_v0.x, new_v0.y], ratio1 * v10_norm, &squared_euclidean)
+            .unwrap();
+        nv0s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
         let new_s0: Vec<usize> = nv0s
             .iter()
             .filter_map(|n| {
-                let idx = n.item as usize;
+                let idx = *n.1;
                 if self.active_idxs.contains(&idx) {
                     let theta_diff =
                         crate::math_util::theta_distance_degree(s0.theta, self.refined[idx].theta);
@@ -211,17 +209,19 @@ impl<'a> Board<'a> {
                 }
                 None
             })
+            .take(3)
             .collect();
-        let nv1s = self.tree.nearest_n_within::<SquaredEuclidean>(
-            &[new_v1.x, new_v1.y],
-            ratio1 * v10_norm,
-            NonZero::new(3).unwrap(),
-            true,
-        );
+
+        let mut nv1s = self
+            .tree
+            .within(&[new_v1.x, new_v1.y], ratio1 * v10_norm, &squared_euclidean)
+            .unwrap();
+        nv1s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
         let new_s1: Vec<usize> = nv1s
             .iter()
             .filter_map(|n| {
-                let idx = n.item as usize;
+                let idx = *n.1;
                 if self.active_idxs.contains(&idx) {
                     let theta_diff =
                         crate::math_util::theta_distance_degree(s1.theta, self.refined[idx].theta);
@@ -231,6 +231,7 @@ impl<'a> Board<'a> {
                 }
                 None
             })
+            .take(3)
             .collect();
         (new_s0, new_s1)
     }
