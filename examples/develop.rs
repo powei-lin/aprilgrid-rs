@@ -9,7 +9,7 @@ use image::{
     imageops::FilterType::{Nearest, Triangle},
 };
 use itertools::Itertools;
-use kiddo::{KdTree, SquaredEuclidean};
+use kdtree::KdTree;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use rerun::RecordingStream;
@@ -108,21 +108,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //         .unwrap();
     // }
 
-    let entries: Vec<[f32; 2]> = refined.iter().map(|r| r.p.try_into().unwrap()).collect();
-    // use the kiddo::KdTree type to get up and running quickly with default settings
-    let tree: KdTree<f32, 2> = (&entries).into();
+    let mut tree = KdTree::new(2);
+    for (i, r) in refined.iter().enumerate() {
+        tree.add(r.arr(), i).unwrap();
+    }
 
     // quad search
-    let mut active_idxs: HashSet<usize> = (0..refined.len()).into_iter().collect();
+    let active_mask: Vec<bool> = vec![true; refined.len()];
     let mut count = 0;
 
-    while active_idxs.len() > 4 {
-        let mut tree = tree.clone();
-        let s0_idx = active_idxs.iter().next().unwrap().clone();
+    while active_mask.iter().filter(|&&b| b).count() > 4 {
+        let s0_idx = (0..refined.len()).find(|&i| active_mask[i]).unwrap();
         println!("s0 {}", s0_idx);
         // let s0_idx: usize = 86;
-        active_idxs.remove(&s0_idx);
-        tree.remove(&refined[s0_idx].arr(), s0_idx as u64);
+        let mut local_active_mask = active_mask.clone();
+        local_active_mask[s0_idx] = false;
         let quads = aprilgrid::detector::init_quads(&refined, s0_idx, &tree);
         for q in quads {
             let points = vec![
@@ -132,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 refined[q[3]].p,
                 refined[q[0]].p,
             ];
-            let board = Board::new(&refined, &active_idxs, &q, 0.3, &tree);
+            let board = Board::new(&refined, &local_active_mask, &q, 0.3, &tree);
             let mut pts = Vec::new();
             let mut colors = Vec::new();
             board.all_tag_indexes().iter().for_each(|q| {

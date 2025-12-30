@@ -103,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // log_image_as_compressed(&recording, "/cam0_color", &img0);
         recording
             .log(
-                format!("/cam0/corners"),
+                "/cam0/corners".to_string(),
                 &rerun::Points2D::new(rerun_shift(&corner_list))
                     .with_colors(corner_colors)
                     .with_radii([rerun::Radius::new_ui_points(2.0)])
@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("msg");
         recording
             .log(
-                format!("/cam0/decode"),
+                "/cam0/decode".to_string(),
                 &rerun::Points2D::new(rerun_shift(&decode_points))
                     .with_colors(tag_colors)
                     .with_radii([rerun::Radius::new_ui_points(2.0)]),

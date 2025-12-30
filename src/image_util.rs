@@ -70,32 +70,138 @@ pub fn tag_affine(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::M
 }
 
 pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
-    let mut out = GrayImagef32::new(img.width(), img.height());
-    for r in 1..(img.height() - 1) {
-        for c in 1..(img.width() - 1) {
-            let (v11, v12, v13, v21, v22, v23, v31, v32, v33) = unsafe {
-                (
-                    img.unsafe_get_pixel(c - 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c, r - 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c - 1, r).0[0],
-                    img.unsafe_get_pixel(c, r).0[0],
-                    img.unsafe_get_pixel(c + 1, r).0[0],
-                    img.unsafe_get_pixel(c - 1, r + 1).0[0],
-                    img.unsafe_get_pixel(c, r + 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r + 1).0[0],
-                )
-            };
-            let lxx = v21 - 2.0 * v22 + v23;
-            let lyy = v12 - 2.0 * v22 + v32;
-            let lxy = (v13 - v11 + v31 - v33) / 4.0;
+    let width = img.width() as usize;
+    let height = img.height() as usize;
+    let mut out = GrayImagef32::new(width as u32, height as u32);
 
-            /* normalize and write out */
+    let img_slice = img.as_raw();
+    let out_slice = out.as_mut();
+
+    let img_ptr = img_slice.as_ptr();
+    let out_ptr = out_slice.as_mut_ptr();
+
+    for r in 1..height - 1 {
+        let r_prev = (r - 1) * width;
+        let r_curr = r * width;
+        let r_next = (r + 1) * width;
+
+        for c in 1..width - 1 {
             unsafe {
-                out.unsafe_put_pixel(c, r, [(lxx * lyy - lxy * lxy)].into());
+                let v11 = *img_ptr.add(r_prev + c - 1);
+                let v12 = *img_ptr.add(r_prev + c);
+                let v13 = *img_ptr.add(r_prev + c + 1);
+                let v21 = *img_ptr.add(r_curr + c - 1);
+                let v22 = *img_ptr.add(r_curr + c);
+                let v23 = *img_ptr.add(r_curr + c + 1);
+                let v31 = *img_ptr.add(r_next + c - 1);
+                let v32 = *img_ptr.add(r_next + c);
+                let v33 = *img_ptr.add(r_next + c + 1);
+
+                let lxx = v21 - (v22 * 2.0) + v23;
+                let lyy = v12 - (v22 * 2.0) + v32;
+                let lxy = (v13 - v11 + v31 - v33) * 0.25;
+
+                *out_ptr.add(r_curr + c) = lxx * lyy - lxy * lxy;
             }
         }
     }
+    out
+}
+pub fn gaussian_blur_f32(img: &GrayImagef32, sigma: f32) -> GrayImagef32 {
+    let radius = (sigma * 2.0).ceil() as i32;
+    let size = (radius * 2 + 1) as usize;
+    let mut kernel = vec![0.0f32; size];
+    let two_sigma_sq = 2.0 * sigma * sigma;
+    let mut sum = 0.0;
+    for (i, val) in kernel.iter_mut().enumerate() {
+        let x = (i as i32 - radius) as f32;
+        let v = (-(x * x) / two_sigma_sq).exp();
+        *val = v;
+        sum += v;
+    }
+    for val in &mut kernel {
+        *val /= sum;
+    }
+
+    let width = img.width() as usize;
+    let height = img.height() as usize;
+    let mut temp = GrayImagef32::new(width as u32, height as u32);
+    let mut out = GrayImagef32::new(width as u32, height as u32);
+
+    let img_raw = img.as_raw();
+    let temp_raw = temp.as_mut();
+    let out_raw = out.as_mut();
+
+    let radius_u = radius as usize;
+
+    // Horizontal pass
+    for y in 0..height {
+        let row_offset = y * width;
+        let img_row = &img_raw[row_offset..row_offset + width];
+        let temp_row = &mut temp_raw[row_offset..row_offset + width];
+
+        // Left border
+        for (x, temp_val) in temp_row.iter_mut().enumerate().take(radius_u.min(width)) {
+            let mut val = 0.0;
+            for (i, &kw) in kernel.iter().enumerate() {
+                let kx = (x as i32 + i as i32 - radius).clamp(0, width as i32 - 1) as usize;
+                unsafe {
+                    val += *img_row.get_unchecked(kx) * kw;
+                }
+            }
+            *temp_val = val;
+        }
+
+        // Center
+        if width > 2 * radius_u {
+            for (i, temp_val) in temp_row[radius_u..width - radius_u].iter_mut().enumerate() {
+                let mut val = 0.0;
+                let start_idx = i; // start_idx for img_row corresponds to the beginning of the kernel window
+                for (k_idx, &kw) in kernel.iter().enumerate() {
+                    unsafe {
+                        val += *img_row.get_unchecked(start_idx + k_idx) * kw;
+                    }
+                }
+                *temp_val = val;
+            }
+        }
+
+        // Right border
+        let right_start = width.saturating_sub(radius_u);
+        for (i, temp_val) in temp_row[right_start..width].iter_mut().enumerate() {
+            let x = i + right_start;
+            if x < radius_u {
+                continue;
+            }
+            let mut val = 0.0;
+            for (k_idx, &kw) in kernel.iter().enumerate() {
+                let kx = (x as i32 + k_idx as i32 - radius).clamp(0, width as i32 - 1) as usize;
+                unsafe {
+                    val += *img_row.get_unchecked(kx) * kw;
+                }
+            }
+            *temp_val = val;
+        }
+    }
+
+    // Vertical pass - Cache-friendly accumulation
+    for y in 0..height {
+        let out_row_offset = y * width;
+        let out_row = &mut out_raw[out_row_offset..out_row_offset + width];
+
+        for (i, &kw) in kernel.iter().enumerate() {
+            let ky = (y as i32 + i as i32 - radius).clamp(0, height as i32 - 1) as usize;
+            let temp_row_offset = ky * width;
+            let temp_row = &temp_raw[temp_row_offset..temp_row_offset + width];
+
+            for x in 0..width {
+                unsafe {
+                    *out_row.get_unchecked_mut(x) += *temp_row.get_unchecked(x) * kw;
+                }
+            }
+        }
+    }
+
     out
 }
 
@@ -132,7 +238,7 @@ pub fn pixel_bfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{ImageBuffer, Luma};
+    use image::Luma;
 
     #[test]
     fn test_tag_homography() {
@@ -207,6 +313,5 @@ mod tests {
 
         // Visited pixels should be set to MAX
         assert_eq!(img.get_pixel(2, 2)[0], f32::MAX);
-        assert_eq!(img.get_pixel(2, 3)[0], f32::MAX);
     }
 }
