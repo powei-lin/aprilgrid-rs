@@ -1,10 +1,8 @@
 use core::f32;
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
     f32::consts::PI,
     ops::BitXor,
-    sync::Arc,
 };
 
 use crate::image_util::GrayImagef32;
@@ -207,50 +205,36 @@ where
     let kernel_size = (half_size_patch * 2 + 1) as usize;
     let num_pixels = kernel_size * kernel_size;
 
-    // Thread-local cache for p_mat
-    thread_local! {
-        static CACHE: RefCell<HashMap<i32, Arc<faer::Mat<f32>>>> = RefCell::new(HashMap::new());
-    }
-
-    let p_mat_arc = CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if let Some(p) = cache.get(&half_size_patch) {
-            p.clone()
-        } else {
-            let mut mat_a: faer::Mat<f32> = faer::Mat::ones(num_pixels, 6);
-            let mut count = 0;
-            for r in 0..kernel_size {
-                for c in 0..kernel_size {
-                    let x = c as f32 - half_size_patch as f32;
-                    let y = r as f32 - half_size_patch as f32;
-                    mat_a[(count, 0)] = x * x;
-                    mat_a[(count, 1)] = x * y;
-                    mat_a[(count, 2)] = y * y;
-                    mat_a[(count, 3)] = x;
-                    mat_a[(count, 4)] = y;
-                    count += 1;
-                }
+    let p_mat = {
+        let mut mat_a: faer::Mat<f32> = faer::Mat::ones(num_pixels, 6);
+        let mut count = 0;
+        for r in 0..kernel_size {
+            for c in 0..kernel_size {
+                let x = c as f32 - half_size_patch as f32;
+                let y = r as f32 - half_size_patch as f32;
+                mat_a[(count, 0)] = x * x;
+                mat_a[(count, 1)] = x * y;
+                mat_a[(count, 2)] = y * y;
+                mat_a[(count, 3)] = x;
+                mat_a[(count, 4)] = y;
+                count += 1;
             }
-
-            let qr = mat_a.qr();
-            let mut p_mat_tmp: faer::Mat<f32> = faer::Mat::zeros(6, num_pixels);
-            let mut rhs: faer::Mat<f32> = faer::Mat::zeros(num_pixels, 1);
-            for i in 0..num_pixels {
-                rhs.fill(0.0);
-                rhs[(i, 0)] = 1.0;
-                qr.solve_lstsq_in_place_with_conj(faer::Conj::No, rhs.as_mut());
-                for j in 0..6 {
-                    p_mat_tmp[(j, i)] = rhs[(j, 0)];
-                }
-            }
-            // Now transpose it to num_pixels x 6 so that each column (fixed parameter j) is contiguous
-            let p = Arc::new(p_mat_tmp.transpose().to_owned());
-            cache.insert(half_size_patch, p.clone());
-            p
         }
-    });
 
-    let p_mat = &*p_mat_arc;
+        let qr = mat_a.qr();
+        let mut p_mat_tmp: faer::Mat<f32> = faer::Mat::zeros(6, num_pixels);
+        let mut rhs: faer::Mat<f32> = faer::Mat::zeros(num_pixels, 1);
+        for i in 0..num_pixels {
+            rhs.fill(0.0);
+            rhs[(i, 0)] = 1.0;
+            qr.solve_lstsq_in_place_with_conj(faer::Conj::No, rhs.as_mut());
+            for j in 0..6 {
+                p_mat_tmp[(j, i)] = rhs[(j, 0)];
+            }
+        }
+        // Now transpose it to num_pixels x 6 so that each column (fixed parameter j) is contiguous
+        p_mat_tmp.transpose().to_owned()
+    };
 
     // kernel computation
     let gamma = half_size_patch as f32;
