@@ -48,6 +48,10 @@ eyre = "0.6.12"
 name = "bench_detection"
 harness = false
 
+[[bench]]
+name = "bench_blur"
+harness = false
+
 [[example]]
 name = "demo"
 path = "examples/demo.rs"
@@ -55,3 +59,7 @@ path = "examples/demo.rs"
 [[example]]
 name = "develop"
 path = "examples/develop.rs"
+
+[profile.profiling]
+inherits = "release"
+debug = true

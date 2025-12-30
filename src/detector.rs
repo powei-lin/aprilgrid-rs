@@ -407,7 +407,7 @@ impl TagDetector {
 
     pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
         let luma_f32 = img.to_luma32f();
-        let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&luma_f32, 1.5);
+        let blur: GrayImagef32 = image_util::gaussian_blur_f32(&luma_f32, 1.5);
         let hessian_response_mat = image_util::hessian_response(&blur);
 
         // Use references to find max/min to avoid allocations

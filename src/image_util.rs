@@ -107,6 +107,102 @@ pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
     }
     out
 }
+pub fn gaussian_blur_f32(img: &GrayImagef32, sigma: f32) -> GrayImagef32 {
+    let radius = (sigma * 2.0).ceil() as i32;
+    let size = (radius * 2 + 1) as usize;
+    let mut kernel = vec![0.0f32; size];
+    let two_sigma_sq = 2.0 * sigma * sigma;
+    let mut sum = 0.0;
+    for i in 0..size {
+        let x = (i as i32 - radius) as f32;
+        let v = (-(x * x) / two_sigma_sq).exp();
+        kernel[i] = v;
+        sum += v;
+    }
+    for val in &mut kernel {
+        *val /= sum;
+    }
+
+    let width = img.width() as usize;
+    let height = img.height() as usize;
+    let mut temp = GrayImagef32::new(width as u32, height as u32);
+    let mut out = GrayImagef32::new(width as u32, height as u32);
+
+    let img_raw = img.as_raw();
+    let temp_raw = temp.as_mut();
+    let out_raw = out.as_mut();
+
+    let radius_u = radius as usize;
+
+    // Horizontal pass
+    for y in 0..height {
+        let row_offset = y * width;
+        let img_row = &img_raw[row_offset..row_offset + width];
+        let temp_row = &mut temp_raw[row_offset..row_offset + width];
+
+        // Left border
+        for x in 0..radius_u.min(width) {
+            let mut val = 0.0;
+            for (i, &kw) in kernel.iter().enumerate() {
+                let kx = (x as i32 + i as i32 - radius).clamp(0, width as i32 - 1) as usize;
+                unsafe {
+                    val += *img_row.get_unchecked(kx) * kw;
+                }
+            }
+            temp_row[x] = val;
+        }
+
+        // Center
+        if width > 2 * radius_u {
+            for x in radius_u..width - radius_u {
+                let mut val = 0.0;
+                let start_idx = x - radius_u;
+                // Unrolling or compiler auto-vectorization should work well here
+                for (i, &kw) in kernel.iter().enumerate() {
+                    unsafe {
+                        val += *img_row.get_unchecked(start_idx + i) * kw;
+                    }
+                }
+                temp_row[x] = val;
+            }
+        }
+
+        // Right border
+        for x in (width.saturating_sub(radius_u))..width {
+            if x < radius_u {
+                continue;
+            }
+            let mut val = 0.0;
+            for (i, &kw) in kernel.iter().enumerate() {
+                let kx = (x as i32 + i as i32 - radius).clamp(0, width as i32 - 1) as usize;
+                unsafe {
+                    val += *img_row.get_unchecked(kx) * kw;
+                }
+            }
+            temp_row[x] = val;
+        }
+    }
+
+    // Vertical pass - Cache-friendly accumulation
+    for y in 0..height {
+        let out_row_offset = y * width;
+        let out_row = &mut out_raw[out_row_offset..out_row_offset + width];
+
+        for (i, &kw) in kernel.iter().enumerate() {
+            let ky = (y as i32 + i as i32 - radius).clamp(0, height as i32 - 1) as usize;
+            let temp_row_offset = ky * width;
+            let temp_row = &temp_raw[temp_row_offset..temp_row_offset + width];
+
+            for x in 0..width {
+                unsafe {
+                    *out_row.get_unchecked_mut(x) += *temp_row.get_unchecked(x) * kw;
+                }
+            }
+        }
+    }
+
+    out
+}
 
 pub fn pixel_bfs(
     mat: &mut GrayImagef32,
