@@ -26,12 +26,12 @@ pub struct Board<'a, 'b> {
 impl<'a, 'b> Board<'a, 'b> {
     pub fn new(
         refined: &'a [Saddle],
-        active_mask: &Vec<bool>,
+        active_mask: &[bool],
         quad_idxs: &[usize; 4],
         spacing_ratio: f32,
         tree: &'b KdTree<f32, usize, [f32; 2]>,
     ) -> Board<'a, 'b> {
-        let mut active_idxs = active_mask.clone();
+        let mut active_idxs = active_mask.to_owned();
         for i in &quad_idxs[1..] {
             active_idxs[*i] = false;
         }
@@ -157,16 +157,16 @@ impl<'a, 'b> Board<'a, 'b> {
         let s3 = self.refined[quad_idxs[3]];
         let (new_s0s, n0, new_s1s, n1) = self.find_closest_potential_saddle_idxs(&s0, &s1);
         let (new_s3s, n3, new_s2s, n2) = self.find_closest_potential_saddle_idxs(&s3, &s2);
-        for i0 in 0..n0 {
-            for i1 in 0..n1 {
-                for i2 in 0..n2 {
-                    for i3 in 0..n3 {
-                        let new_s0 = self.refined[new_s0s[i0]];
-                        let new_s1 = self.refined[new_s1s[i1]];
-                        let new_s2 = self.refined[new_s2s[i2]];
-                        let new_s3 = self.refined[new_s3s[i3]];
+        for &idx0 in new_s0s.iter().take(n0) {
+            for &idx1 in new_s1s.iter().take(n1) {
+                for &idx2 in new_s2s.iter().take(n2) {
+                    for &idx3 in new_s3s.iter().take(n3) {
+                        let new_s0 = self.refined[idx0];
+                        let new_s1 = self.refined[idx1];
+                        let new_s2 = self.refined[idx2];
+                        let new_s3 = self.refined[idx3];
                         if is_valid_quad(&new_s0, &new_s1, &new_s2, &new_s3) {
-                            return Some([new_s0s[i0], new_s1s[i1], new_s2s[i2], new_s3s[i3]]);
+                            return Some([idx0, idx1, idx2, idx3]);
                         }
                     }
                 }

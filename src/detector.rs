@@ -1,8 +1,10 @@
 use core::f32;
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     f32::consts::PI,
     ops::BitXor,
+    sync::Arc,
 };
 
 use crate::image_util::GrayImagef32;
@@ -168,18 +170,17 @@ pub fn best_tag(bits: u64, thres: u8, tag_family: &[u64], edge_bits: u8) -> Opti
     None
 }
 
-fn init_saddle_clusters(h_mat: &GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u32)>> {
-    let mut tmp_h_mat = h_mat.clone();
+fn init_saddle_clusters(mut h_mat: GrayImagef32, threshold: f32) -> Vec<Vec<(u32, u32)>> {
     let mut clusters = Vec::new();
+    let mut cluster = Vec::with_capacity(64); // Reuse buffer
     for r in 1..h_mat.height() - 1 {
         for c in 1..h_mat.width() - 1 {
-            // Check if pixel is candidate before allocating vector
-            let v = unsafe { tmp_h_mat.unsafe_get_pixel(c, r).0[0] };
+            let v = unsafe { h_mat.unsafe_get_pixel(c, r).0[0] };
             if v < threshold {
-                let mut cluster = Vec::new();
-                image_util::pixel_bfs(&mut tmp_h_mat, &mut cluster, c, r, threshold);
+                cluster.clear();
+                image_util::pixel_bfs(&mut h_mat, &mut cluster, c, r, threshold);
                 if !cluster.is_empty() {
-                    clusters.push(cluster);
+                    clusters.push(cluster.clone());
                 }
             }
         }
@@ -202,87 +203,78 @@ where
 {
     const PIXEL_MOVE_THRESHOLD: f32 = 1.0;
     let mut refined_corners = Vec::<Saddle>::new();
-    // kernel
+
     let kernel_size = (half_size_patch * 2 + 1) as usize;
+    let num_pixels = kernel_size * kernel_size;
+
+    // Thread-local cache for p_mat
+    thread_local! {
+        static CACHE: RefCell<HashMap<i32, Arc<faer::Mat<f32>>>> = RefCell::new(HashMap::new());
+    }
+
+    let p_mat_arc = CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(p) = cache.get(&half_size_patch) {
+            p.clone()
+        } else {
+            let mut mat_a: faer::Mat<f32> = faer::Mat::ones(num_pixels, 6);
+            let mut count = 0;
+            for r in 0..kernel_size {
+                for c in 0..kernel_size {
+                    let x = c as f32 - half_size_patch as f32;
+                    let y = r as f32 - half_size_patch as f32;
+                    mat_a[(count, 0)] = x * x;
+                    mat_a[(count, 1)] = x * y;
+                    mat_a[(count, 2)] = y * y;
+                    mat_a[(count, 3)] = x;
+                    mat_a[(count, 4)] = y;
+                    count += 1;
+                }
+            }
+
+            let qr = mat_a.qr();
+            let mut p_mat_tmp: faer::Mat<f32> = faer::Mat::zeros(6, num_pixels);
+            let mut rhs: faer::Mat<f32> = faer::Mat::zeros(num_pixels, 1);
+            for i in 0..num_pixels {
+                rhs.fill(0.0);
+                rhs[(i, 0)] = 1.0;
+                qr.solve_lstsq_in_place_with_conj(faer::Conj::No, rhs.as_mut());
+                for j in 0..6 {
+                    p_mat_tmp[(j, i)] = rhs[(j, 0)];
+                }
+            }
+            // Now transpose it to num_pixels x 6 so that each column (fixed parameter j) is contiguous
+            let p = Arc::new(p_mat_tmp.transpose().to_owned());
+            cache.insert(half_size_patch, p.clone());
+            p
+        }
+    });
+
+    let p_mat = &*p_mat_arc;
+
+    // kernel computation
     let gamma = half_size_patch as f32;
-    let flat_k_slice: Vec<f32> = (0..kernel_size)
+    let flat_k: Vec<f32> = (0..kernel_size)
         .flat_map(|i| {
-            (0..kernel_size)
-                .map(move |j| {
-                    0.0_f32.max(
-                        gamma + 1.0
-                            - ((gamma - i as f32) * (gamma - i as f32)
-                                + (gamma - j as f32) * (gamma - j as f32))
-                                .sqrt(),
-                    )
-                })
-                .collect::<Vec<f32>>()
+            (0..kernel_size).map(move |j| {
+                0.0_f32.max(
+                    gamma + 1.0
+                        - ((gamma - i as f32) * (gamma - i as f32)
+                            + (gamma - j as f32) * (gamma - j as f32))
+                            .sqrt(),
+                )
+            })
         })
         .collect();
-    let s = flat_k_slice.iter().sum::<f32>();
-    let flat_k: Vec<f32> = flat_k_slice.iter().map(|v| v / s).collect();
-
-    // Precompute pseudo-inverse matrix P = (A^T * A)^-1 * A^T
-    // A has shape (kernel_size*kernel_size, 6)
-    let num_pixels = kernel_size * kernel_size;
-    let mut mat_a: faer::Mat<f32> = faer::Mat::ones(num_pixels, 6);
-    let mut count = 0;
-    for r in 0..kernel_size {
-        for c in 0..kernel_size {
-            let x = c as f32 - half_size_patch as f32;
-            let y = r as f32 - half_size_patch as f32;
-            mat_a[(count, 0)] = x * x;
-            mat_a[(count, 1)] = x * y;
-            mat_a[(count, 2)] = y * y;
-            mat_a[(count, 3)] = x;
-            mat_a[(count, 4)] = y;
-            count += 1;
-        }
-    }
-
-    // Compute P = (A^T * A)^-1 * A^T
-    // We can use QR decomposition to solve for P.
-    // A * P_inv = I  -> P_inv? No.
-    // We want params = P * b.
-    // A * params = b.
-    // params = (A^T A)^-1 A^T b.
-    // Let P = (A^T A)^-1 A^T.
-    // P is 6 x num_pixels.
-
-    // Using faer to compute P.
-    // P = (A.qr().solve(I))? No, A is tall.
-    // A = Q R.
-    // A^T A = R^T Q^T Q R = R^T R.
-    // (A^T A)^-1 = (R^T R)^-1 = R^-1 (R^T)^-1.
-    // A^T = R^T Q^T.
-    // P = R^-1 (R^T)^-1 R^T Q^T = R^-1 Q^T.
-    // So P = R^-1 * Q^T.
-
-    let qr = mat_a.qr();
-    // Q is m x m, R is m x n (with zeros at bottom).
-    // faer QR returns a structure that can solve least squares.
-    // We want to compute P such that P * b gives the solution.
-    // We can solve A * x_i = e_i for each basis vector e_i of b space?
-    // Then the matrix [x_1 ... x_m] is exactly P.
-    // Yes.
-
-    let mut p_mat: faer::Mat<f32> = faer::Mat::zeros(6, num_pixels);
-    let mut rhs: faer::Mat<f32> = faer::Mat::zeros(num_pixels, 1);
-
-    for i in 0..num_pixels {
-        rhs.fill(0.0);
-        rhs[(i, 0)] = 1.0;
-        qr.solve_lstsq_in_place_with_conj(faer::Conj::No, rhs.as_mut());
-        for j in 0..6 {
-            p_mat[(j, i)] = rhs[(j, 0)];
-        }
-    }
+    let s = flat_k.iter().sum::<f32>();
+    let flat_k: Vec<f32> = flat_k.iter().map(|v| v / s).collect();
 
     let (width, height) = (image_input.width() as i32, image_input.height() as i32);
     let half_size_patch2 = half_size_patch * 2;
-    let patch_size: usize = 4 * half_size_patch as usize + 1;
+    let img_raw = image_input.as_raw();
+    let img_ptr = img_raw.as_ptr();
+    let stride = width as usize;
 
-    // Reusable buffers
     let mut smooth_sub_image = vec![0.0f32; num_pixels];
 
     // iter all corner
@@ -297,42 +289,58 @@ where
             continue;
         }
 
-        // patch
-        let patch = image_input.view(
-            (round_x - half_size_patch2) as u32,
-            (round_y - half_size_patch2) as u32,
-            (patch_size) as u32,
-            (patch_size) as u32,
-        );
+        let start_x = (round_x - half_size_patch2) as usize;
+        let start_y = (round_y - half_size_patch2) as usize;
 
-        // Convolution
-        // Optimize: avoid allocation in loop
-        for r in 0..kernel_size {
-            for c in 0..kernel_size {
-                // Manual dot product to avoid allocation
-                let mut conv_p = 0.0;
-                let mut k_idx = 0;
-                for pr in 0..kernel_size {
-                    for pc in 0..kernel_size {
-                        let pixel_val: f32 =
-                            patch.get_pixel((c + pc) as u32, (r + pr) as u32).0[0].into();
-                        conv_p += pixel_val * flat_k[k_idx];
-                        k_idx += 1;
+        // Convolution with raw pointers - Unrolled for kernel_size=5 (common case)
+        if kernel_size == 5 {
+            unsafe {
+                let k = &flat_k;
+                for r in 0..5 {
+                    for c in 0..5 {
+                        let mut conv_p = 0.0;
+                        for pr in 0..5 {
+                            let offset = (start_y + r + pr) * stride + start_x + c;
+                            let rp = img_ptr.add(offset);
+                            conv_p += (*rp).into() * k[pr * 5];
+                            conv_p += (*rp.add(1)).into() * k[pr * 5 + 1];
+                            conv_p += (*rp.add(2)).into() * k[pr * 5 + 2];
+                            conv_p += (*rp.add(3)).into() * k[pr * 5 + 3];
+                            conv_p += (*rp.add(4)).into() * k[pr * 5 + 4];
+                        }
+                        smooth_sub_image[r * 5 + c] = conv_p;
                     }
                 }
-                smooth_sub_image[r * kernel_size + c] = conv_p;
+            }
+        } else {
+            for r in 0..kernel_size {
+                for c in 0..kernel_size {
+                    let mut conv_p = 0.0;
+                    let mut k_idx = 0;
+                    for pr in 0..kernel_size {
+                        unsafe {
+                            let offset = (start_y + r + pr) * stride + start_x + c;
+                            let row_ptr = img_ptr.add(offset);
+                            for pc in 0..kernel_size {
+                                let pixel_val: f32 = (*row_ptr.add(pc)).into();
+                                conv_p += pixel_val * flat_k[k_idx];
+                                k_idx += 1;
+                            }
+                        }
+                    }
+                    smooth_sub_image[r * kernel_size + c] = conv_p;
+                }
             }
         }
 
-        // Compute params using precomputed P
-        // params = P * smooth_sub_image
+        // Parameter estimation using scalar raw pointers
         let mut params = [0.0f32; 6];
-        for j in 0..6 {
+        for (col_j, param) in p_mat.col_iter().zip(params.iter_mut()) {
             let mut sum = 0.0;
             for i in 0..num_pixels {
-                sum += p_mat[(j, i)] * smooth_sub_image[i];
+                sum += col_j[i] * smooth_sub_image[i];
             }
-            params[j] = sum;
+            *param = sum;
         }
 
         let a1 = params[0];
@@ -340,41 +348,29 @@ where
         let a3 = params[2];
         let a4 = params[3];
         let a5 = params[4];
-        // let a6 = params[5];
         let fxx = 2.0 * a1;
         let fyy = 2.0 * a3;
         let fxy = a2;
         let d = fxx * fyy - fxy * fxy;
 
-        // is saddle point
         if d < 0.0 {
             let (x0, y0) = math_util::find_xy(2.0 * a1, a2, a4, a2, 2.0 * a3, a5);
-            // move too much
-            if x0.abs() > PIXEL_MOVE_THRESHOLD || y0.abs() > PIXEL_MOVE_THRESHOLD {
-                continue;
-            } else {
-                // Alturki, Abdulrahman S., and John S. Loomis.
-                // "A new X-Corner Detection for Camera Calibration Using Saddle Points."
+            if x0.abs() <= PIXEL_MOVE_THRESHOLD && y0.abs() <= PIXEL_MOVE_THRESHOLD {
                 let c5 = (a1 + a3) / 2.0;
                 let c4 = (a1 - a3) / 2.0;
                 let c3 = a2 / 2.0;
                 let k = (c4 * c4 + c3 * c3).sqrt();
-                let phi = (-c5 / k).acos() / 2.0 / PI * 180.0;
-
-                let theta = c3.atan2(c4) / 2.0 / PI * 180.0;
-
-                if c5.abs() >= k {
-                    continue;
+                if c5.abs() < k {
+                    let phi = (-c5 / k).acos() / 2.0 / PI * 180.0;
+                    let theta = c3.atan2(c4) / 2.0 / PI * 180.0;
+                    refined_corners.push(Saddle {
+                        p: (initial_x.round() + x0, initial_y.round() + y0),
+                        k,
+                        theta,
+                        phi,
+                    });
                 }
-                refined_corners.push(Saddle {
-                    p: (initial_x.round() + x0, initial_y.round() + y0),
-                    k,
-                    theta,
-                    phi,
-                });
             }
-        } else {
-            continue;
         }
     }
     refined_corners
@@ -426,36 +422,40 @@ impl TagDetector {
     }
 
     pub fn refined_saddle_points(&self, img: &DynamicImage) -> Vec<Saddle> {
-        let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&img.to_luma32f(), 1.5);
+        let luma_f32 = img.to_luma32f();
+        let blur: GrayImagef32 = imageproc::filter::gaussian_blur_f32(&luma_f32, 1.5);
         let hessian_response_mat = image_util::hessian_response(&blur);
+
+        // Use references to find max/min to avoid allocations
         let min_response = hessian_response_mat
-            .to_vec()
+            .as_raw()
             .iter()
-            .fold(f32::MAX, |acc, e| acc.min(*e));
+            .fold(f32::MAX, |acc, &e| acc.min(e));
         let min_response_threshold = min_response * 0.05;
-        let saddle_clusters = init_saddle_clusters(&hessian_response_mat, min_response_threshold);
+
+        let saddle_clusters = init_saddle_clusters(hessian_response_mat, min_response_threshold);
         let saddle_cluster_centers: Vec<(f32, f32)> = saddle_clusters
             .iter()
             .map(|c| {
-                let (sx, sy) = c.iter().fold((0.0, 0.0), |(ax, ay), (ex, ey)| {
-                    (ax + *ex as f32, ay + *ey as f32)
+                let (sx, sy) = c.iter().fold((0.0, 0.0), |(ax, ay), &(ex, ey)| {
+                    (ax + ex as f32, ay + ey as f32)
                 });
                 (sx / c.len() as f32, sy / c.len() as f32)
             })
             .collect();
         let saddle_points = rochade_refine(&blur, &saddle_cluster_centers, 2);
-        let smax = saddle_points.iter().fold(f32::MIN, |acc, s| acc.max(s.k)) / 10.0;
+
+        if saddle_points.is_empty() {
+            return Vec::new();
+        }
+
+        let s_max_k = saddle_points.iter().fold(f32::MIN, |acc, s| acc.max(s.k)) / 10.0;
         let refined: Vec<Saddle> = saddle_points
-            .iter()
-            .filter_map(|s| {
-                if s.k < smax
-                    || s.phi < self.detector_params.min_saddle_angle
-                    || s.phi > self.detector_params.max_saddle_angle
-                {
-                    None
-                } else {
-                    Some(s.to_owned())
-                }
+            .into_iter()
+            .filter(|s| {
+                s.k >= s_max_k
+                    && s.phi >= self.detector_params.min_saddle_angle
+                    && s.phi <= self.detector_params.max_saddle_angle
             })
             .collect();
         refined

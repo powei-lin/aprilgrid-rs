@@ -70,29 +70,38 @@ pub fn tag_affine(corners: &[(f32, f32)], side_bits: u8, margin: f32) -> faer::M
 }
 
 pub fn hessian_response(img: &GrayImagef32) -> GrayImagef32 {
-    let mut out = GrayImagef32::new(img.width(), img.height());
-    for r in 1..(img.height() - 1) {
-        for c in 1..(img.width() - 1) {
-            let (v11, v12, v13, v21, v22, v23, v31, v32, v33) = unsafe {
-                (
-                    img.unsafe_get_pixel(c - 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c, r - 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r - 1).0[0],
-                    img.unsafe_get_pixel(c - 1, r).0[0],
-                    img.unsafe_get_pixel(c, r).0[0],
-                    img.unsafe_get_pixel(c + 1, r).0[0],
-                    img.unsafe_get_pixel(c - 1, r + 1).0[0],
-                    img.unsafe_get_pixel(c, r + 1).0[0],
-                    img.unsafe_get_pixel(c + 1, r + 1).0[0],
-                )
-            };
-            let lxx = v21 - 2.0 * v22 + v23;
-            let lyy = v12 - 2.0 * v22 + v32;
-            let lxy = (v13 - v11 + v31 - v33) / 4.0;
+    let width = img.width() as usize;
+    let height = img.height() as usize;
+    let mut out = GrayImagef32::new(width as u32, height as u32);
 
-            /* normalize and write out */
+    let img_slice = img.as_raw();
+    let out_slice = out.as_mut();
+
+    let img_ptr = img_slice.as_ptr();
+    let out_ptr = out_slice.as_mut_ptr();
+
+    for r in 1..height - 1 {
+        let r_prev = (r - 1) * width;
+        let r_curr = r * width;
+        let r_next = (r + 1) * width;
+
+        for c in 1..width - 1 {
             unsafe {
-                out.unsafe_put_pixel(c, r, [(lxx * lyy - lxy * lxy)].into());
+                let v11 = *img_ptr.add(r_prev + c - 1);
+                let v12 = *img_ptr.add(r_prev + c);
+                let v13 = *img_ptr.add(r_prev + c + 1);
+                let v21 = *img_ptr.add(r_curr + c - 1);
+                let v22 = *img_ptr.add(r_curr + c);
+                let v23 = *img_ptr.add(r_curr + c + 1);
+                let v31 = *img_ptr.add(r_next + c - 1);
+                let v32 = *img_ptr.add(r_next + c);
+                let v33 = *img_ptr.add(r_next + c + 1);
+
+                let lxx = v21 - (v22 * 2.0) + v23;
+                let lyy = v12 - (v22 * 2.0) + v32;
+                let lxy = (v13 - v11 + v31 - v33) * 0.25;
+
+                *out_ptr.add(r_curr + c) = lxx * lyy - lxy * lxy;
             }
         }
     }
@@ -132,7 +141,7 @@ pub fn pixel_bfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{ImageBuffer, Luma};
+    use image::Luma;
 
     #[test]
     fn test_tag_homography() {
